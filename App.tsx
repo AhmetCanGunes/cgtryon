@@ -59,7 +59,6 @@ import {
   UPSCALE_SHARPNESS,
   UPSCALE_FACTORS,
   AdCreativeResult,
-  CollectionSettings,
   CollectionResult,
   SEASON_OPTIONS,
   WEATHER_OPTIONS,
@@ -69,7 +68,7 @@ import {
   getRequiredCredits,
   PresetModel
 } from './types';
-import { generateModelImage, generateVirtualTryOn, generateAdCreative, generateCollectionImage, generateVirtualTryOnV2, generateVirtualTryOnV3, upscaleImage } from './services/geminiService'; 
+import { generateModelImage, generateVirtualTryOn, generateAdCreative, generateCollectionImage, generateVirtualTryOnV2, generateVirtualTryOnV3, upscaleImage } from './services/geminiService';
 import { RefreshCw, ScanEye } from 'lucide-react'; 
 
 const DEFAULT_FILTER_SETTINGS: ImageFilterSettings = {
@@ -977,16 +976,19 @@ const App: React.FC = () => {
      }
   };
 
-  const handleCollectionGenerate = async (image: File, collectionSettings: CollectionSettings): Promise<CollectionResult[]> => {
+  const handleCollectionGenerate = async (
+    productImages: File[],
+    modelImage: File,
+    sceneImage: File,
+    customPrompt: string,
+    numberOfImages: number
+  ): Promise<CollectionResult[]> => {
      const isUserAdmin = isAdmin(currentUser?.email);
 
-     const loopCount = collectionSettings.numberOfImages || 1;
-     const useProModel = collectionSettings.modelQuality.includes('Pro') || collectionSettings.modelQuality.includes('Nano');
-     const aiModelKey = useProModel ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
-     const aiModelName = useProModel ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
+     const loopCount = numberOfImages || 1;
+     const aiModelName = 'gemini-3-pro-image-preview';
      const estimatedCost = estimateAICost(aiModelName, loopCount);
-
-     const requiredCredits = getRequiredCredits(aiModelKey, loopCount, '1K');
+     const requiredCredits = getRequiredCredits(aiModelName, loopCount, '1K');
 
      if (!isUserAdmin && userCredits < requiredCredits) {
        showNotification('error', 'Yetersiz Kredi', `Bu işlem için ${requiredCredits} kredi gerekiyor. Kredi satın alın.`);
@@ -998,7 +1000,7 @@ const App: React.FC = () => {
      setCurrentTask(LoadingState.GENERATING_AD);
 
      try {
-        const results = await generateCollectionImage(image, collectionSettings);
+        const results = await generateCollectionImage(productImages, modelImage, sceneImage, customPrompt, numberOfImages);
 
         if (currentUser) {
           try {
@@ -1006,7 +1008,7 @@ const App: React.FC = () => {
               await trackAdminUsage(
                 currentUser.uid,
                 'collection',
-                `Koleksiyon: ${collectionSettings.platform} (${loopCount} görsel)`,
+                `Koleksiyon: ${loopCount} görsel`,
                 aiModelName,
                 estimatedCost
               );
@@ -1015,7 +1017,7 @@ const App: React.FC = () => {
                 currentUser.uid,
                 requiredCredits,
                 'collection',
-                `Koleksiyon: ${collectionSettings.platform} (${loopCount} görsel)`,
+                `Koleksiyon: ${loopCount} görsel`,
                 aiModelName,
                 estimatedCost
               );
@@ -1031,8 +1033,8 @@ const App: React.FC = () => {
                 results.map(res => ({
                   imageUrl: res.imageUrl,
                   type: 'ad-creative' as const,
-                  settings: collectionSettings,
-                  prompt: `Koleksiyon: ${collectionSettings.platform}`,
+                  settings: { customPrompt, numberOfImages },
+                  prompt: `Koleksiyon: ${loopCount} görsel`,
                   aiModel: aiModelName
                 }))
               );

@@ -1355,28 +1355,10 @@ export interface GenerationSettings {
     metadata: AdCreativeMetadata;
   }
 
-  // --- COLLECTION MODE TYPES (Simplified Ad Creative without text overlays) ---
-  export interface CollectionSettings {
-    platform: string;
-    theme: string;
-    modelQuality: string;
-    pose: string;
-    numberOfImages: number;
-    specificVariationId?: string;
-    season?: string;
-    weather?: string;
-    customPrompt?: string;
-    studioStyle?: string;
-    studioColor?: string;
-  }
-
+  // --- COLLECTION MODE TYPES ---
   export interface CollectionMetadata {
-    backgroundPrompt: string;
-    poseInstruction: string;
-    theme: string;
-    aspectRatio: string;
-    season?: string;
-    weather?: string;
+    customPrompt: string;
+    numberOfImages: number;
   }
 
   export interface CollectionResult {

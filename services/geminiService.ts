@@ -1,7 +1,7 @@
 
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { GenerationSettings, TryOnSettings, AdSettings, AdCopy, UpscaleSettings, TryOnV3Settings, AdCreativeResult, AdCreativeMetadata, AD_THEME_VARIATIONS, getVariedBackgrounds, isAccessoryProduct, isWalletProduct, isBagProduct, isShoesProduct, isSunglassesProduct, BRANDED_CONCEPT_PROMPTS, BRANDED_STANCE_PROMPTS, BRANDED_POSE_ENERGY_PROMPTS, BRANDED_CLOTHING_STYLE_PROMPTS, BRANDED_HAIR_STYLE_PROMPTS, BRANDED_EXPRESSION_PROMPTS, BRANDED_PRODUCT_ORIENTATION_PROMPTS, BRANDED_PRODUCT_PLACEMENT_PROMPTS, BRANDED_PRODUCT_CONTEXT_PROMPTS, BRANDED_PRODUCT_CONDITION_PROMPTS, BRANDED_COLOR_TEMPERATURE_PROMPTS, BRANDED_COLOR_HARMONY_PROMPTS, BRANDED_MATERIAL_FINISH_PROMPTS, BRANDED_FRAMING_PROMPTS, BRANDED_DEPTH_PROMPTS, BRANDED_NEGATIVE_SPACE_PROMPTS, BRANDED_ASPECT_RATIO_STYLE_PROMPTS, BRANDED_LIGHTING_TYPE_PROMPTS, BRANDED_SHADOW_QUALITY_PROMPTS, BRANDED_CAPTURE_STYLE_PROMPTS, BRANDED_LENS_PROMPTS, BRANDED_DEPTH_OF_FIELD_PROMPTS, JewelrySettings, JEWELRY_STAND_COLORS, JEWELRY_BACKGROUNDS, MensFashionSettings, MENS_FASHION_POSE_OPTIONS, MENS_FASHION_BACKGROUNDS, MENS_FASHION_BACKGROUND_STYLES, STUDIO_MINIMAL_GRADIENT_COLORS, WomensFashionSettings, WOMENS_FASHION_POSE_OPTIONS, WOMENS_FASHION_BACKGROUNDS, WOMENS_FASHION_BACKGROUND_STYLES, ReferencedProductionSettings, ScenePlacementSettings, REFERENCED_POSE_OPTIONS, SHOT_TYPE_OPTIONS, AnimalSettings, ANIMAL_TYPES, DOG_BREEDS, CAT_BREEDS, BIRD_BREEDS, RABBIT_BREEDS, HORSE_BREEDS, ANIMAL_POSITIONS, ANIMAL_POSES, ANIMAL_SIZES, ANIMAL_LOOK_DIRECTIONS, CollectionSettings, CollectionMetadata, CollectionResult } from "../types";
+import { GenerationSettings, TryOnSettings, AdSettings, AdCopy, UpscaleSettings, TryOnV3Settings, AdCreativeResult, AdCreativeMetadata, AD_THEME_VARIATIONS, getVariedBackgrounds, isAccessoryProduct, isWalletProduct, isBagProduct, isShoesProduct, isSunglassesProduct, BRANDED_CONCEPT_PROMPTS, BRANDED_STANCE_PROMPTS, BRANDED_POSE_ENERGY_PROMPTS, BRANDED_CLOTHING_STYLE_PROMPTS, BRANDED_HAIR_STYLE_PROMPTS, BRANDED_EXPRESSION_PROMPTS, BRANDED_PRODUCT_ORIENTATION_PROMPTS, BRANDED_PRODUCT_PLACEMENT_PROMPTS, BRANDED_PRODUCT_CONTEXT_PROMPTS, BRANDED_PRODUCT_CONDITION_PROMPTS, BRANDED_COLOR_TEMPERATURE_PROMPTS, BRANDED_COLOR_HARMONY_PROMPTS, BRANDED_MATERIAL_FINISH_PROMPTS, BRANDED_FRAMING_PROMPTS, BRANDED_DEPTH_PROMPTS, BRANDED_NEGATIVE_SPACE_PROMPTS, BRANDED_ASPECT_RATIO_STYLE_PROMPTS, BRANDED_LIGHTING_TYPE_PROMPTS, BRANDED_SHADOW_QUALITY_PROMPTS, BRANDED_CAPTURE_STYLE_PROMPTS, BRANDED_LENS_PROMPTS, BRANDED_DEPTH_OF_FIELD_PROMPTS, JewelrySettings, JEWELRY_STAND_COLORS, JEWELRY_BACKGROUNDS, MensFashionSettings, MENS_FASHION_POSE_OPTIONS, MENS_FASHION_BACKGROUNDS, MENS_FASHION_BACKGROUND_STYLES, STUDIO_MINIMAL_GRADIENT_COLORS, WomensFashionSettings, WOMENS_FASHION_POSE_OPTIONS, WOMENS_FASHION_BACKGROUNDS, WOMENS_FASHION_BACKGROUND_STYLES, ReferencedProductionSettings, ScenePlacementSettings, REFERENCED_POSE_OPTIONS, SHOT_TYPE_OPTIONS, AnimalSettings, ANIMAL_TYPES, DOG_BREEDS, CAT_BREEDS, BIRD_BREEDS, RABBIT_BREEDS, HORSE_BREEDS, ANIMAL_POSITIONS, ANIMAL_POSES, ANIMAL_SIZES, ANIMAL_LOOK_DIRECTIONS, CollectionResult } from "../types";
 
 // Generation result with AI model info
 export interface GenerationResult {
@@ -2843,149 +2843,112 @@ export const generateSimilarAdCreative = async (
 
 // --- COLLECTION MODE (No text overlays) ---
 export const generateCollectionImage = async (
+    productImages: File[],
     modelImage: File,
-    settings: CollectionSettings
+    sceneImage: File | null,
+    customPrompt: string,
+    numberOfImages: number
 ): Promise<CollectionResult[]> => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    let { base64, mimeType } = await processImageForGemini(modelImage);
-
     const preferredModel = 'gemini-3-pro-image-preview';
 
-    let ratio = '1:1';
-    if (settings.platform.includes('9:16')) ratio = '9:16';
-    if (settings.platform.includes('4:5')) ratio = '3:4';
-    if (settings.platform.includes('16:9')) ratio = '16:9';
+    // Process all images in parallel
+    const [processedModel, ...processedProducts] = await Promise.all([
+        processImageForGemini(modelImage),
+        ...productImages.map(f => processImageForGemini(f))
+    ]);
 
-    let promptsToUse: string[] = [];
-
-    // Handle Stüdyo (Studio) theme with background style + color picker
-    if (settings.theme === 'Stüdyo (Studio)' && settings.studioStyle) {
-        const bgStyleDesc = BACKGROUND_STYLE_DESCRIPTIONS[settings.studioStyle] || BACKGROUND_STYLE_DESCRIPTIONS['solid'];
-        const bgInfo = MENS_FASHION_BACKGROUNDS.find(bg => bg.id === settings.studioColor);
-        const bgHex = bgInfo?.hex || '#FFFFFF';
-        const bgName = bgInfo?.name || 'Beyaz';
-
-        const selectedStyleObj = MENS_FASHION_BACKGROUND_STYLES.find(s => s.id === settings.studioStyle);
-        let studioPrompt = '';
-
-        if (selectedStyleObj?.supportsColor) {
-            studioPrompt = `Professional fashion photography studio. Background: ${bgStyleDesc}. Background color: ${bgName} (${bgHex}). High-end advertising photography setup. Ultrarealistic, 8K resolution.`;
-        } else {
-            studioPrompt = `Professional fashion photography studio. Background: ${bgStyleDesc}. High-end advertising photography setup. Ultrarealistic, 8K resolution.`;
-        }
-
-        promptsToUse = Array(settings.numberOfImages).fill(studioPrompt);
+    let processedScene: { base64: string; mimeType: string; width: number; height: number } | null = null;
+    if (sceneImage) {
+        processedScene = await processImageForGemini(sceneImage);
     }
 
-    if (promptsToUse.length === 0 && settings.specificVariationId && settings.specificVariationId !== 'auto') {
-        const themeVariations = AD_THEME_VARIATIONS[settings.theme];
-        const selected = themeVariations?.find(v => v.id === settings.specificVariationId);
+    const generateSingleImage = async (index: number): Promise<CollectionResult> => {
+        // Build image parts
+        const imageParts: any[] = [];
 
-        if (selected) {
-            promptsToUse = Array(settings.numberOfImages).fill(selected.prompt);
-        }
-    }
+        // IMAGE 1: Model/Manken
+        imageParts.push({ inlineData: { data: processedModel.base64, mimeType: processedModel.mimeType } });
 
-    if (promptsToUse.length === 0) {
-        const themeVariations = AD_THEME_VARIATIONS[settings.theme] || AD_THEME_VARIATIONS['Minimalist Modern (Temiz)'];
-        promptsToUse = themeVariations.slice(0, settings.numberOfImages).map(v => v.prompt);
-        while (promptsToUse.length < settings.numberOfImages) {
-            promptsToUse = promptsToUse.concat(promptsToUse);
-        }
-        promptsToUse = promptsToUse.slice(0, settings.numberOfImages);
-    }
+        // IMAGE 2-N: Product references
+        processedProducts.forEach(p => {
+            imageParts.push({ inlineData: { data: p.base64, mimeType: p.mimeType } });
+        });
 
-    const generateSingleImage = async (backgroundConcept: string, index: number): Promise<CollectionResult> => {
-        let poseInstruction = "";
-        if (settings.pose && !settings.pose.includes('Seçiniz')) {
-            poseInstruction = `POSE INSTRUCTION: Reshape the subject/model into this pose: "${settings.pose}". Ensure the pose interacts naturally with the environment.`;
-        } else {
-            poseInstruction = "POSE: Select a confident, high-fashion pose that fits the theme.";
-        }
-
-        let environmentExtras = "";
-        if (settings.season && !settings.season.includes('Seçiniz')) {
-            let seasonConcept = "";
-            if (settings.season === 'İlkbahar') seasonConcept = "Spring season, blooming nature, fresh green atmosphere, floral touches";
-            else if (settings.season === 'Yaz') seasonConcept = "Summer season, bright high-contrast sunlight, vibrant colors, warm atmosphere";
-            else if (settings.season === 'Sonbahar') seasonConcept = "Autumn season aesthetic. Colors: Warm browns, deep oranges, beige. Lighting: Cozy, warm temperature. RULE: If INDOORS, NO falling leaves; use warm lighting and autumn decor only. If OUTDOORS, fallen leaves are allowed.";
-            else if (settings.season === 'Kış') seasonConcept = "Winter season, cold blue tones, frost, snow details, cozy atmosphere";
-
-            if (seasonConcept) {
-                 environmentExtras += `\nENVIRONMENTAL MODIFIER: Apply ${seasonConcept}.`;
-            }
-        }
-
-        if (settings.weather && !settings.weather.includes('Seçiniz')) {
-            environmentExtras += `\nWEATHER CONDITION: ${settings.weather} (Adjust lighting and atmosphere accordingly).`;
+        // IMAGE N+1: Scene reference (if provided)
+        if (processedScene) {
+            imageParts.push({ inlineData: { data: processedScene.base64, mimeType: processedScene.mimeType } });
         }
 
         let customPromptSection = "";
-        if (settings.customPrompt && settings.customPrompt.trim().length > 0) {
-            customPromptSection = `\nADDITIONAL USER INSTRUCTION: ${settings.customPrompt.trim()}`;
+        if (customPrompt && customPrompt.trim().length > 0) {
+            customPromptSection = `\nADDITIONAL USER INSTRUCTION: ${customPrompt.trim()}`;
         }
 
-        const fullSceneDescription = backgroundConcept + environmentExtras + customPromptSection;
+        const sceneInstruction = processedScene
+            ? `IMAGE ${2 + processedProducts.length}: Scene/location reference. Match the environment, lighting direction, perspective, and shadows from this scene image.`
+            : `SCENE: Choose a high-end, photorealistic real-world location that complements the clothing style. Use professional fashion photography lighting.`;
 
         const imagePrompt = `
-            FASHION COLLECTION PHOTOGRAPHY TASK (Gemini 3 Pro).
-            INPUT: Image of a model/mannequin.
-            GOAL: Create a HIGH-END PHOTOREALISTIC FASHION COLLECTION IMAGE. NO TEXT whatsoever.
+FASHION COLLECTION PHOTOGRAPHY TASK.
+You are given multiple reference images. Your goal: produce ONE high-end photorealistic fashion photograph. NO TEXT whatsoever.
 
-            🔒 STRICT ZERO TEXT RULE 🔒
-            - ABSOLUTELY NO TEXT, LETTERS, WORDS, NUMBERS, LOGOS, WATERMARKS, OR ANY WRITTEN CONTENT on the image.
-            - No headlines, no subtitles, no captions, no buttons, no labels, no price tags, no brand names.
-            - The output must be a PURE PHOTOGRAPHIC IMAGE with ZERO typographic elements.
-            - If you generate ANY text on the image, the result is INVALID.
+IMAGE ROLES:
+- IMAGE 1: Model/Manken reference. Use this person's face, body shape, skin tone, and hair EXACTLY.
+- IMAGE 2${processedProducts.length > 1 ? ` to ${1 + processedProducts.length}` : ''}: Product/clothing reference${processedProducts.length > 1 ? 's (different angles of the SAME product)' : ''}. These show the garment from different angles — treat them as ONE single outfit.
+- ${sceneInstruction}
 
-            🔒 MODEL/SUBJECT PRESERVATION RULES 🔒
-            1. Keep the model/mannequin EXACTLY as-is: colors, textures, designs, details.
-            2. Do NOT change, add, or remove clothing.
-            3. Preserve brand logos, patterns, fabric textures.
-            4. If model is present: face, skin tone, hair must remain IDENTICAL.
+🔒 STRICT ZERO TEXT RULE 🔒
+- ABSOLUTELY NO TEXT, LETTERS, WORDS, NUMBERS, LOGOS, WATERMARKS, OR ANY WRITTEN CONTENT on the image.
+- No headlines, no subtitles, no captions, no buttons, no labels, no price tags, no brand names.
+- The output must be a PURE PHOTOGRAPHIC IMAGE with ZERO typographic elements.
+- If you generate ANY text on the image, the result is INVALID.
 
-            SELECTED SETTINGS:
-${settings.pose && !settings.pose.includes('Seçiniz') ? `            - Pose: "${settings.pose}" - APPLY THIS` : '            - Pose: Automatic'}
-${settings.season && !settings.season.includes('Seçiniz') ? `            - Season: "${settings.season}" - APPLY THIS` : ''}
-${settings.weather && !settings.weather.includes('Seçiniz') ? `            - Weather: "${settings.weather}" - APPLY THIS` : ''}
-            - Theme: "${settings.theme}" - APPLY THIS
+🔒 CLOTHING PRESERVATION (100% ACCURACY) 🔒
+- The garment from the product reference images must appear EXACTLY as shown.
+- Preserve: color, pattern, fabric texture, stitching, buttons, zippers, logos, and all design details with 100% fidelity.
+- Do NOT alter, simplify, or reinterpret ANY clothing detail.
+- The clothing fit should look natural on the model's body.
 
-            SCENE DESCRIPTION (REAL WORLD LOCATION):
-            ${fullSceneDescription}
+🔒 FACE & BODY PRESERVATION 🔒
+- The model's face must be IDENTICAL to IMAGE 1: same facial features, skin tone, eye color, eyebrows, lips, hairstyle.
+- Body proportions must match the reference model.
+- Skin texture must be photorealistic — not waxy, not AI-looking.
 
-            INSTRUCTIONS:
-            1. PLACEMENT: Integrate the input subject seamlessly into the REALISTIC scene described above.
-            2. ${poseInstruction}
-            3. LIGHTING: Re-light the subject to match the scene's NATURAL lighting.
+🔒 SCENE INTEGRATION 🔒
+- Lighting on the model must match the scene's natural light direction, color temperature, and intensity.
+- Shadows must be consistent with the environment.
+- Perspective and scale must be correct — the model must look like they are physically IN the scene.
+- Use moderate depth of field: background slightly soft but still detailed and recognizable.
+${customPromptSection}
 
-            STRICT QUALITY RULES:
-            - Ultrarealistic, 8K resolution render.
-            - The human model/mannequin must look ultrarealistic with natural skin texture, real fabric physics, and photographic detail.
-            - MODERATE DEPTH OF FIELD: Background should be slightly soft but still clear and detailed, not heavily blurred.
-            - NO FAKE/3D RENDER LOOK for the environment.
-            - Perfect Anatomy (if model).
-            - ZERO TEXT ON IMAGE. This is a pure photography output.
-            ${ANATOMY_PROMPT}
-            ${CLEAN_BACKGROUND_PROMPT}
+${index > 0 ? `VARIATION NOTE: This is image ${index + 1} of a set. Create a slightly different angle, pose variation, or subtle lighting change while keeping all other rules identical.` : ''}
+
+STRICT QUALITY RULES:
+- Ultrarealistic, 8K resolution render.
+- Natural skin texture, real fabric physics, photographic detail.
+- NO fake/3D render look.
+- Perfect human anatomy.
+- ZERO TEXT ON IMAGE.
+${ANATOMY_PROMPT}
+${CLEAN_BACKGROUND_PROMPT}
         `;
 
-         const imageConfig: any = {
+        // Add text prompt as the last part
+        imageParts.push({ text: imagePrompt });
+
+        const imageConfig: any = {
             imageConfig: {
-                aspectRatio: getAspectRatio(ratio),
+                aspectRatio: '3:4',
                 imageSize: '2K'
             },
             safetySettings: SAFETY_SETTINGS
         };
 
         try {
-             const imageResponse = await ai.models.generateContent({
+            const imageResponse = await ai.models.generateContent({
                 model: preferredModel,
-                contents: {
-                    parts: [
-                        { inlineData: { data: base64, mimeType: mimeType } },
-                        { text: imagePrompt }
-                    ]
-                },
+                contents: { parts: imageParts },
                 config: imageConfig
             });
 
@@ -2996,122 +2959,30 @@ ${settings.weather && !settings.weather.includes('Seçiniz') ? `            - We
                 id: `col_${Date.now()}_${index}`,
                 imageUrl: imageUrl,
                 metadata: {
-                    backgroundPrompt: backgroundConcept,
-                    poseInstruction: poseInstruction,
-                    theme: settings.theme,
-                    aspectRatio: ratio,
-                    season: settings.season,
-                    weather: settings.weather
+                    customPrompt: customPrompt,
+                    numberOfImages: numberOfImages
                 }
             };
         } catch (error: any) {
-             console.error("Collection Gen Error", error);
-             throw error;
+            console.error("Collection Gen Error", error);
+            throw error;
         }
     };
 
     try {
-        const promises = promptsToUse.map((p, idx) => generateSingleImage(p, idx));
-        const results = await Promise.all(promises);
+        // Sequential generation with 2s delay to avoid rate limiting
+        const results: CollectionResult[] = [];
+        for (let i = 0; i < numberOfImages; i++) {
+            if (i > 0) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            const result = await generateSingleImage(i);
+            results.push(result);
+        }
         return results;
     } catch (error: any) {
-        if (error.status === 429) throw new Error("Kota aşıldı (429). Çok fazla varyasyon aynı anda istendi.");
+        if (error.status === 429) throw new Error("Kota aşıldı (429). Çok fazla istek gönderildi, lütfen bekleyin.");
         if (error.message?.includes('Safety')) throw new Error("Güvenlik filtresine takıldı. Lütfen promptu kontrol edin.");
-        throw error;
-    }
-};
-
-export const generateSimilarCollectionImage = async (
-    modelImage: File,
-    referenceMetadata: CollectionMetadata,
-    count: number
-): Promise<CollectionResult[]> => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const { base64, mimeType } = await processImageForGemini(modelImage);
-    const preferredModel = 'gemini-3-pro-image-preview';
-
-    const { backgroundPrompt, poseInstruction, theme, aspectRatio, season, weather } = referenceMetadata;
-
-    let environmentExtras = "";
-    if (season && !season.includes('Seçiniz')) {
-        let seasonConcept = "";
-        if (season === 'İlkbahar') seasonConcept = "Spring season, blooming nature, fresh green atmosphere, floral touches";
-        else if (season === 'Yaz') seasonConcept = "Summer season, bright high-contrast sunlight, vibrant colors, warm atmosphere";
-        else if (season === 'Sonbahar') seasonConcept = "Autumn season aesthetic. Colors: Warm browns, deep oranges, beige. Lighting: Cozy, warm temperature. RULE: If INDOORS, NO falling leaves; use warm lighting and autumn decor only. If OUTDOORS, fallen leaves are allowed.";
-        else if (season === 'Kış') seasonConcept = "Winter season, cold blue tones, frost, snow details, cozy atmosphere";
-
-        if (seasonConcept) {
-             environmentExtras += `\nENVIRONMENTAL MODIFIER: Apply ${seasonConcept}.`;
-        }
-    }
-
-    if (weather && !weather.includes('Seçiniz')) {
-        environmentExtras += `\nWEATHER CONDITION: ${weather} (Adjust lighting and atmosphere accordingly).`;
-    }
-
-    const fullSceneDescription = backgroundPrompt + environmentExtras;
-
-    const generateIteration = async (idx: number): Promise<CollectionResult> => {
-        const imagePrompt = `
-            FASHION COLLECTION PHOTOGRAPHY ITERATION TASK.
-            INPUT: Model/Mannequin Image.
-            GOAL: Create a VARIATION of a successful collection photo concept. NO TEXT whatsoever.
-
-            🔒 STRICT ZERO TEXT RULE 🔒
-            - ABSOLUTELY NO TEXT, LETTERS, WORDS, NUMBERS, LOGOS, WATERMARKS, OR ANY WRITTEN CONTENT on the image.
-            - The output must be a PURE PHOTOGRAPHIC IMAGE with ZERO typographic elements.
-
-            REFERENCE CONCEPT (Keep this style/location/weather):
-            "${fullSceneDescription}"
-
-            INSTRUCTION:
-            - Create a NEW variation of this scene.
-            - Change the camera angle slightly, or adjust the lighting (e.g. from morning to golden hour), or shift the model's position slightly.
-            - The vibe must remain strictly "${theme}".
-
-            ${poseInstruction}
-
-            STRICT QUALITY: Ultrarealistic, 8K resolution.
-            - The human model/mannequin must look ultrarealistic with natural skin texture, real fabric physics, and photographic detail.
-            - ZERO TEXT ON IMAGE.
-            ${ANATOMY_PROMPT}
-            ${CLEAN_BACKGROUND_PROMPT}
-        `;
-
-        const imageConfig: any = {
-            imageConfig: {
-                aspectRatio: getAspectRatio(aspectRatio || '1:1'),
-                imageSize: '2K'
-            },
-            safetySettings: SAFETY_SETTINGS
-        };
-
-        const imageResponse = await ai.models.generateContent({
-            model: preferredModel,
-            contents: {
-                parts: [
-                    { inlineData: { data: base64, mimeType: mimeType } },
-                    { text: imagePrompt }
-                ]
-            },
-            config: imageConfig
-        });
-
-        const imageUrl = extractImageFromResponse(imageResponse);
-        if (!imageUrl) throw new Error("No image generated");
-
-        return {
-            id: `col_sim_${Date.now()}_${idx}`,
-            imageUrl: imageUrl,
-            metadata: referenceMetadata
-        };
-    };
-
-    try {
-        const promises = Array.from({ length: count }).map((_, idx) => generateIteration(idx));
-        return await Promise.all(promises);
-    } catch (error: any) {
-        console.error("Generate Similar Collection Error", error);
         throw error;
     }
 };
