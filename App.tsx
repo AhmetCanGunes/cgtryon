@@ -6,8 +6,6 @@ import DarkModeWrapper from './components/Layout/DarkModeWrapper';
 import ImageDisplay from './components/ImageDisplay';
 import FullScreenImageViewer from './components/FullScreenImageViewer';
 import VirtualTryOnMode from './components/VirtualTryOnMode';
-import VirtualTryOnModeV2 from './components/VirtualTryOnModeV2';
-import VirtualTryOnModeV3 from './components/VirtualTryOnModeV3';
 import AdCreativeMode from './components/AdCreativeMode';
 import UpscaleMode from './components/UpscaleMode';
 import LandingPage from './components/LandingPage';
@@ -54,7 +52,6 @@ import {
   AdSettings,
   AdCopy,
   UpscaleSettings,
-  TryOnV3Settings,
   getVariedBackgrounds,
   UPSCALE_SHARPNESS,
   UPSCALE_FACTORS,
@@ -68,7 +65,7 @@ import {
   getRequiredCredits,
   PresetModel
 } from './types';
-import { generateModelImage, generateVirtualTryOn, generateAdCreative, generateCollectionImage, generateVirtualTryOnV2, generateVirtualTryOnV3, upscaleImage } from './services/geminiService';
+import { generateModelImage, generateVirtualTryOn, generateAdCreative, generateCollectionImage, upscaleImage } from './services/geminiService';
 import { RefreshCw, ScanEye } from 'lucide-react'; 
 
 const DEFAULT_FILTER_SETTINGS: ImageFilterSettings = {
@@ -382,6 +379,33 @@ const App: React.FC = () => {
     setShowLanding(true);
   };
 
+  // Centralized credit deduction handler for child components
+  // Creates a mode-specific callback that child components call with just (credits)
+  const createCreditsHandler = (modeType: string) => async (credits: number) => {
+    if (!currentUser) return;
+    const isUserAdmin_ = isAdmin(currentUser.email);
+    const aiModel = 'gemini-3-pro-image-preview';
+    const cost = estimateAICost(aiModel, credits);
+    const details = `${modeType}: ${credits} görsel`;
+
+    try {
+      if (isUserAdmin_) {
+        await trackAdminUsage(currentUser.uid, modeType, details, aiModel, cost);
+      } else {
+        await useCredits(currentUser.uid, credits, modeType, details, aiModel, cost);
+        const profile = await getUserProfile(currentUser.uid);
+        if (profile) {
+          setUserCredits(profile.credits);
+        }
+      }
+    } catch (error) {
+      console.error('Error deducting credits:', error);
+      if (!isUserAdmin_) {
+        setUserCredits(prev => prev - credits);
+      }
+    }
+  };
+
   const handleSelectPackage = async (packageId: string) => {
     if (!currentUser) return;
 
@@ -582,8 +606,10 @@ const App: React.FC = () => {
             });
         }
 
-        setGeneratedImages(prev => [...prev, ...generatedImageUrls]);
-        setCurrentIndex(generatedImages.length + generatedImageUrls.length - 1); 
+        setGeneratedImages(prev => {
+          setCurrentIndex(prev.length + generatedImageUrls.length - 1);
+          return [...prev, ...generatedImageUrls];
+        });
         setImageFilterSettings(DEFAULT_FILTER_SETTINGS);
         
         // Track usage with AI model info
@@ -763,137 +789,6 @@ const App: React.FC = () => {
         setCurrentTask(LoadingState.IDLE);
         refreshDashboardStats();
     }
-  };
-
-  const handleTryOnV2Generate = async (target: File, ref: File, quality: string): Promise<string> => {
-     const isUserAdmin = isAdmin(currentUser?.email);
-     
-     const useProModel = quality.includes('Pro') || quality.includes('Nano');
-     const aiModelKey = useProModel ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
-     const aiModelName = useProModel ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
-     const estimatedCost = estimateAICost(aiModelName, 1);
-     
-     // Calculate required credits (TryOnV2 varsayılan 1K çözünürlük = 1 kredi)
-     const requiredCredits = getRequiredCredits(aiModelKey, 1, '1K');
-
-     // Kredi kontrolü - yetersiz kredi varsa satın alma sayfasına yönlendir
-     if (!isUserAdmin && userCredits < requiredCredits) {
-       showNotification('error', 'Yetersiz Kredi', `Bu işlem için ${requiredCredits} kredi gerekiyor. Kredi satın alın.`);
-       setShowPricing(true);
-       throw new Error("Yetersiz kredi");
-     }
-
-     setIsGenerating(true);
-     setCurrentTask(LoadingState.GENERATING_TRYON);
-
-     try {
-        const result = await generateVirtualTryOnV2(target, ref, quality);
-        
-        // Track usage
-        if (currentUser) {
-          try {
-            if (isUserAdmin) {
-              await trackAdminUsage(
-                currentUser.uid,
-                'try-on',
-                `Sanal Kabin V2: ${quality}`,
-                aiModelName,
-                estimatedCost
-              );
-            } else {
-              await useCredits(
-                currentUser.uid,
-                requiredCredits,
-                'try-on',
-                `Sanal Kabin V2: ${quality}`,
-                aiModelName,
-                estimatedCost
-              );
-              const profile = await getUserProfile(currentUser.uid);
-              if (profile) {
-                setUserCredits(profile.credits);
-              }
-            }
-          } catch (error) {
-            console.error('Error tracking usage:', error);
-          }
-        }
-        
-        return result;
-     } catch (error: any) {
-        await handleApiError(error);
-        throw error;
-     } finally {
-        setIsGenerating(false);
-        setCurrentTask(LoadingState.IDLE);
-        refreshDashboardStats();
-     }
-  };
-
-  const handleTryOnV3Generate = async (original: File, product: File, shoe: File | null, settings: TryOnV3Settings): Promise<string> => {
-      const isUserAdmin = isAdmin(currentUser?.email);
-      
-      const loopCount = settings.numberOfImages || 1;
-      const useProModel = settings.modelQuality.includes('Pro') || settings.modelQuality.includes('Nano');
-      const aiModelKey = useProModel ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
-      const aiModelName = useProModel ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
-      const estimatedCost = estimateAICost(aiModelName, loopCount);
-      
-      // Calculate required credits (TryOnV3 varsayılan 1K = 1 kredi)
-      const requiredCredits = getRequiredCredits(aiModelKey, loopCount, '1K');
-
-      // Kredi kontrolü - yetersiz kredi varsa satın alma sayfasına yönlendir
-      if (!isUserAdmin && userCredits < requiredCredits) {
-        showNotification('error', 'Yetersiz Kredi', `Bu işlem için ${requiredCredits} kredi gerekiyor. Kredi satın alın.`);
-        setShowPricing(true);
-        throw new Error("Yetersiz kredi");
-      }
-
-      setIsGenerating(true);
-      setCurrentTask(LoadingState.GENERATING_TRYON);
-
-      try {
-          const result = await generateVirtualTryOnV3(original, product, shoe, settings);
-          
-          // Track usage
-          if (currentUser) {
-            try {
-              if (isUserAdmin) {
-                await trackAdminUsage(
-                  currentUser.uid,
-                  'try-on',
-                  `Sanal Kabin V3: ${settings.modelQuality} (${loopCount} görsel)`,
-                  aiModelName,
-                  estimatedCost
-                );
-              } else {
-                await useCredits(
-                  currentUser.uid,
-                  requiredCredits,
-                  'try-on',
-                  `Sanal Kabin V3: ${settings.modelQuality} (${loopCount} görsel)`,
-                  aiModelName,
-                  estimatedCost
-                );
-                const profile = await getUserProfile(currentUser.uid);
-                if (profile) {
-                  setUserCredits(profile.credits);
-                }
-              }
-            } catch (error) {
-              console.error('Error tracking usage:', error);
-            }
-          }
-          
-          return result;
-      } catch (error: any) {
-          await handleApiError(error);
-          throw error;
-      } finally {
-          setIsGenerating(false);
-          setCurrentTask(LoadingState.IDLE);
-          refreshDashboardStats();
-      }
   };
 
   const handleAdGenerate = async (image: File, adSettings: AdSettings): Promise<AdCreativeResult[]> => {
@@ -1229,8 +1124,6 @@ const App: React.FC = () => {
         onBack={() => setShowAdminPanel(false)}
         onStudioGenerate={handleStudioGenerate}
         onTryOnGenerate={handleTryOnGenerate}
-        onTryOnV2Generate={handleTryOnV2Generate}
-        onTryOnV3Generate={handleTryOnV3Generate}
         onAdGenerate={handleAdGenerate}
         onUpscaleGenerate={handleUpscaleGenerate}
         productImage={productImage}
@@ -1324,7 +1217,7 @@ const App: React.FC = () => {
                   userCredits={userCredits}
                   isUserAdmin={isAdmin(currentUser?.email)}
                   onShowPricing={() => setShowPricing(true)}
-                  onCreditsUsed={(credits) => setUserCredits(prev => prev - credits)}
+                  onCreditsUsed={createCreditsHandler('jewelry')}
                   initialMode={selectedSubMode}
                   onModeChange={setSelectedSubMode}
                 />
@@ -1335,7 +1228,7 @@ const App: React.FC = () => {
                   userCredits={userCredits}
                   isUserAdmin={isAdmin(currentUser?.email)}
                   onShowPricing={() => setShowPricing(true)}
-                  onCreditsUsed={(credits) => setUserCredits(prev => prev - credits)}
+                  onCreditsUsed={createCreditsHandler('mens-fashion')}
                   initialMode={selectedSubMode}
                   onModeChange={setSelectedSubMode}
                 />
@@ -1346,7 +1239,7 @@ const App: React.FC = () => {
                   userCredits={userCredits}
                   isUserAdmin={isAdmin(currentUser?.email)}
                   onShowPricing={() => setShowPricing(true)}
-                  onCreditsUsed={(credits) => setUserCredits(prev => prev - credits)}
+                  onCreditsUsed={createCreditsHandler('womens-fashion')}
                   initialMode={selectedSubMode}
                   onModeChange={setSelectedSubMode}
                 />
@@ -1357,7 +1250,7 @@ const App: React.FC = () => {
                   userCredits={userCredits}
                   isUserAdmin={isAdmin(currentUser?.email)}
                   onShowPricing={() => setShowPricing(true)}
-                  onCreditsUsed={(credits) => setUserCredits(prev => prev - credits)}
+                  onCreditsUsed={createCreditsHandler('style-selector')}
                 />
               </DarkModeWrapper>
           ) : currentView === 'product-annotation' ? (
@@ -1377,7 +1270,7 @@ const App: React.FC = () => {
                 userCredits={userCredits}
                 isUserAdmin={isAdmin(currentUser?.email)}
                 onShowPricing={() => setShowPricing(true)}
-                onCreditsUsed={(credits) => setUserCredits(prev => prev - credits)}
+                onCreditsUsed={createCreditsHandler('ozel')}
               />
           ) : currentView === 'collections' ? (
               <DarkModeWrapper>

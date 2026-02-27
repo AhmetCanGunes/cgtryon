@@ -1,6 +1,7 @@
 
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { useBlobUrl } from '../hooks/useBlobUrl';
 import { Upload, X, Sparkles, Loader2, Info, ArrowRight, Camera, Move, ImageIcon, Download, Plus, ChevronLeft, ChevronRight, Layers, Shirt, Check, FolderDown, User, Trash2 } from 'lucide-react';
 import { 
     TryOnSettings, 
@@ -79,6 +80,16 @@ const VirtualTryOnMode: React.FC<VirtualTryOnModeProps> = ({ onGenerate, isGener
     ];
     setSceneVariationOptions(opts);
   }, [settings.theme]);
+
+  // Blob URL management — guaranteed cleanup via useBlobUrl hook
+  const modelPreview = useBlobUrl(modelImage);
+  const garmentPreview = useBlobUrl(garmentImage);
+  const garment2Preview = useBlobUrl(garmentImage2);
+  const garment3Preview = useBlobUrl(garmentImage3);
+  const garment4Preview = useBlobUrl(garmentImage4);
+  const garment5Preview = useBlobUrl(garmentImage5);
+  const garment6Preview = useBlobUrl(garmentImage6);
+  const garment7Preview = useBlobUrl(garmentImage7);
 
   const modelInputRef = useRef<HTMLInputElement>(null);
   const garmentInputRef = useRef<HTMLInputElement>(null);
@@ -201,6 +212,7 @@ const VirtualTryOnMode: React.FC<VirtualTryOnModeProps> = ({ onGenerate, isGener
   // Kompakt görsel yükleme kutusu (Erkek Giyim tarzında)
   const renderCompactUploadBox = (
     image: File | null,
+    previewUrl: string | null,
     setImage: (f: File | null) => void,
     inputRef: React.RefObject<HTMLInputElement | null>,
     type: 'model' | 'garment' | 'garment2' | 'garment3',
@@ -210,11 +222,11 @@ const VirtualTryOnMode: React.FC<VirtualTryOnModeProps> = ({ onGenerate, isGener
     badgeColor: string,
     badgeContent: React.ReactNode
   ) => {
-    if (image) {
+    if (image && previewUrl) {
       return (
         <div className="relative group w-16 h-16 flex-shrink-0">
           <img
-            src={URL.createObjectURL(image)}
+            src={previewUrl}
             alt={label}
             className={`w-full h-full object-cover rounded-lg ring-2 ${ringColor}`}
           />
@@ -284,7 +296,7 @@ const VirtualTryOnMode: React.FC<VirtualTryOnModeProps> = ({ onGenerate, isGener
                     {modelImage ? (
                       <div className="relative group w-16 h-16 flex-shrink-0">
                         <img
-                          src={URL.createObjectURL(modelImage)}
+                          src={modelPreview!}
                           alt="Model"
                           className="w-full h-full object-cover rounded-lg ring-2 ring-primary"
                         />
@@ -321,7 +333,7 @@ const VirtualTryOnMode: React.FC<VirtualTryOnModeProps> = ({ onGenerate, isGener
                     {garmentImage ? (
                       <div className="relative group w-16 h-16 flex-shrink-0">
                         <img
-                          src={URL.createObjectURL(garmentImage)}
+                          src={garmentPreview!}
                           alt="Kıyafet"
                           className="w-full h-full object-cover rounded-lg ring-2 ring-mode-accent"
                         />
@@ -353,7 +365,7 @@ const VirtualTryOnMode: React.FC<VirtualTryOnModeProps> = ({ onGenerate, isGener
                     {garmentImage2 ? (
                       <div className="relative group w-16 h-16 flex-shrink-0">
                         <img
-                          src={URL.createObjectURL(garmentImage2)}
+                          src={garment2Preview!}
                           alt="Kıyafet 2"
                           className="w-full h-full object-cover rounded-lg ring-1 ring-gray-300"
                         />
@@ -385,7 +397,7 @@ const VirtualTryOnMode: React.FC<VirtualTryOnModeProps> = ({ onGenerate, isGener
                     {garmentImage3 ? (
                       <div className="relative group w-16 h-16 flex-shrink-0">
                         <img
-                          src={URL.createObjectURL(garmentImage3)}
+                          src={garment3Preview!}
                           alt="Kıyafet 3"
                           className="w-full h-full object-cover rounded-lg ring-1 ring-gray-300"
                         />
@@ -417,7 +429,7 @@ const VirtualTryOnMode: React.FC<VirtualTryOnModeProps> = ({ onGenerate, isGener
                     {garmentImage4 ? (
                       <div className="relative group w-16 h-16 flex-shrink-0">
                         <img
-                          src={URL.createObjectURL(garmentImage4)}
+                          src={garment4Preview!}
                           alt="Kıyafet 4"
                           className="w-full h-full object-cover rounded-lg ring-1 ring-gray-300"
                         />
@@ -449,7 +461,7 @@ const VirtualTryOnMode: React.FC<VirtualTryOnModeProps> = ({ onGenerate, isGener
                     {garmentImage5 ? (
                       <div className="relative group w-16 h-16 flex-shrink-0">
                         <img
-                          src={URL.createObjectURL(garmentImage5)}
+                          src={garment5Preview!}
                           alt="Kıyafet 5"
                           className="w-full h-full object-cover rounded-lg ring-1 ring-gray-300"
                         />
@@ -481,7 +493,7 @@ const VirtualTryOnMode: React.FC<VirtualTryOnModeProps> = ({ onGenerate, isGener
                     {garmentImage6 ? (
                       <div className="relative group w-16 h-16 flex-shrink-0">
                         <img
-                          src={URL.createObjectURL(garmentImage6)}
+                          src={garment6Preview!}
                           alt="Kıyafet 6"
                           className="w-full h-full object-cover rounded-lg ring-1 ring-gray-300"
                         />
@@ -513,7 +525,7 @@ const VirtualTryOnMode: React.FC<VirtualTryOnModeProps> = ({ onGenerate, isGener
                     {garmentImage7 ? (
                       <div className="relative group w-16 h-16 flex-shrink-0">
                         <img
-                          src={URL.createObjectURL(garmentImage7)}
+                          src={garment7Preview!}
                           alt="Kıyafet 7"
                           className="w-full h-full object-cover rounded-lg ring-1 ring-gray-300"
                         />

@@ -1,6 +1,7 @@
 
 
 import React, { useState, useRef, useCallback } from 'react';
+import { useBlobUrl, useBlobUrls } from '../hooks/useBlobUrl';
 import { Upload, Sparkles, Loader2, LayoutTemplate, Download, ChevronLeft, ChevronRight, Images, X, Plus, User, MapPin, FileText } from 'lucide-react';
 import { CollectionResult } from '../types';
 
@@ -26,6 +27,11 @@ const CollectionsMode: React.FC<CollectionsModeProps> = ({ onGenerate, isGenerat
   // Result State
   const [resultImages, setResultImages] = useState<CollectionResult[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
+
+  // Blob URL management — guaranteed cleanup via useBlobUrl hooks
+  const productPreviews = useBlobUrls(productImages);
+  const modelPreview = useBlobUrl(modelImage);
+  const scenePreview = useBlobUrl(sceneImage);
 
   // Refs
   const productInputRef = useRef<HTMLInputElement>(null);
@@ -96,7 +102,7 @@ const CollectionsMode: React.FC<CollectionsModeProps> = ({ onGenerate, isGenerat
             <div className="grid grid-cols-3 gap-1.5">
               {productImages.map((file, idx) => (
                 <div key={idx} className="relative aspect-square rounded-lg border border-white/10 bg-white/5 overflow-hidden group">
-                  <img src={URL.createObjectURL(file)} className="w-full h-full object-cover" alt={`Ürün ${idx + 1}`} />
+                  <img src={productPreviews[idx]} className="w-full h-full object-cover" alt={`Ürün ${idx + 1}`} />
                   <button
                     onClick={() => handleRemoveProductImage(idx)}
                     className="absolute top-0.5 right-0.5 p-0.5 bg-black/70 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
@@ -140,7 +146,7 @@ const CollectionsMode: React.FC<CollectionsModeProps> = ({ onGenerate, isGenerat
             >
               {modelImage ? (
                 <>
-                  <img src={URL.createObjectURL(modelImage)} className="w-full h-full object-cover" alt="Manken" />
+                  <img src={modelPreview!} className="w-full h-full object-cover" alt="Manken" />
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                     <span className="text-[9px] text-white bg-black/50 px-2 py-1 rounded">Değiştir</span>
                   </div>
@@ -176,7 +182,7 @@ const CollectionsMode: React.FC<CollectionsModeProps> = ({ onGenerate, isGenerat
             >
               {sceneImage ? (
                 <>
-                  <img src={URL.createObjectURL(sceneImage)} className="w-full h-full object-cover" alt="Mekan" />
+                  <img src={scenePreview!} className="w-full h-full object-cover" alt="Mekan" />
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                     <span className="text-[9px] text-white bg-black/50 px-2 py-1 rounded">Değiştir</span>
                   </div>

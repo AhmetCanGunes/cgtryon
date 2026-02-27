@@ -1,8 +1,12 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, Timestamp, doc, setDoc, getDoc, updateDoc, increment, getDocs, deleteDoc, query, where, orderBy, limit } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, Timestamp, doc, setDoc, getDoc, updateDoc, increment, getDocs, deleteDoc, query, where, orderBy, limit, runTransaction } from 'firebase/firestore';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, User } from 'firebase/auth';
 import { getStorage, ref, uploadString, getDownloadURL } from 'firebase/storage';
-import { ADMIN_EMAILS, EmailSubscriber, AdminStats, AdminUserView } from '../types';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
+import { EmailSubscriber, AdminStats, AdminUserView } from '../types';
+
+// Admin email listesi — sunucu tarafında da aynısı var (functions/src/index.ts)
+const ADMIN_EMAILS = ['admin@kaapp.com'];
 
 // Firebase yapılandırması
 const firebaseConfig = {
@@ -15,16 +19,27 @@ const firebaseConfig = {
 };
 
 // Firebase'i başlat
-let app;
-let db;
-let auth;
-let storage;
+let app: ReturnType<typeof initializeApp> | undefined;
+let db: ReturnType<typeof getFirestore> | undefined;
+let auth: ReturnType<typeof getAuth> | undefined;
+let storage: ReturnType<typeof getStorage> | undefined;
 
 try {
   app = initializeApp(firebaseConfig);
   db = getFirestore(app);
   auth = getAuth(app);
   storage = getStorage(app);
+
+  // App Check — activate once RECAPTCHA_ENTERPRISE_SITE_KEY is set in .env
+  const recaptchaKey = process.env.RECAPTCHA_ENTERPRISE_SITE_KEY;
+  if (recaptchaKey) {
+    initializeAppCheck(app, {
+      provider: new ReCaptchaEnterpriseProvider(recaptchaKey),
+      isTokenAutoRefreshEnabled: true,
+    });
+    console.log('Firebase App Check initialized');
+  }
+
   console.log('Firebase initialized successfully');
 } catch (error) {
   console.error('Firebase initialization error:', error);
@@ -246,45 +261,51 @@ export const updateUserProfile = async (
 
 // Kredi kullan
 export const useCredits = async (
-  uid: string, 
-  amount: number, 
-  type: string, 
+  uid: string,
+  amount: number,
+  type: string,
   details: string,
   aiModel?: string,
   estimatedCost?: number
 ): Promise<boolean> => {
   try {
     if (!db) throw new Error('Firestore is not initialized');
-    
+
     const userRef = doc(db, 'users', uid);
-    const userSnap = await getDoc(userRef);
-    
-    if (!userSnap.exists()) {
-      throw new Error('User not found');
-    }
-    
-    const userData = userSnap.data() as UserProfile;
-    
-    if (userData.credits < amount) {
-      throw new Error('Yetersiz kredi!');
-    }
-    
-    // Kredi düş ve kullanım kaydı ekle
-    const usageRecord: UsageRecord = {
-      id: `${Date.now()}`,
-      type: type as any,
-      creditsUsed: amount,
-      timestamp: new Date().toISOString(),
-      details,
-      aiModel: aiModel || 'Unknown',
-      estimatedCost: estimatedCost || 0
-    };
-    
-    await updateDoc(userRef, {
-      credits: increment(-amount),
-      usageHistory: [...(userData.usageHistory || []), usageRecord]
+
+    // Use a Firestore transaction to atomically check and deduct credits
+    await runTransaction(db, async (transaction) => {
+      const userSnap = await transaction.get(userRef);
+
+      if (!userSnap.exists()) {
+        throw new Error('User not found');
+      }
+
+      const userData = userSnap.data() as UserProfile;
+
+      if (userData.credits < amount) {
+        throw new Error('Yetersiz kredi!');
+      }
+
+      const usageRecord: UsageRecord = {
+        id: `${Date.now()}`,
+        type: type as any,
+        creditsUsed: amount,
+        timestamp: new Date().toISOString(),
+        details,
+        aiModel: aiModel || 'Unknown',
+        estimatedCost: estimatedCost || 0
+      };
+
+      const newCredits = userData.credits - amount;
+      const newHistory = [...(userData.usageHistory || []).slice(-99), usageRecord];
+
+      transaction.update(userRef, {
+        credits: newCredits,
+        usageHistory: newHistory
+      });
     });
-    
+
     console.log(`✅ ${amount} credits used for ${type} (AI Model: ${aiModel}, Cost: $${estimatedCost?.toFixed(4)})`);
     return true;
   } catch (error: any) {
@@ -341,7 +362,11 @@ export const trackAdminUsage = async (
 export const addCredits = async (uid: string, amount: number): Promise<boolean> => {
   try {
     if (!db) throw new Error('Firestore is not initialized');
-    
+    if (!Number.isFinite(amount) || amount <= 0) {
+      console.error('Invalid credit amount:', amount);
+      return false;
+    }
+
     const userRef = doc(db, 'users', uid);
     await updateDoc(userRef, {
       credits: increment(amount)
@@ -562,8 +587,8 @@ export const getAdminStats = async (): Promise<AdminStats> => {
           totalCreditsUsed += creditsUsed;
 
           // Tarih bazlı analiz
-          if (record.date) {
-            const recordDate = new Date(record.date);
+          if (record.timestamp) {
+            const recordDate = new Date(record.timestamp);
             const recordDateKey = recordDate.toISOString().split('T')[0];
 
             // Bu hafta mı?

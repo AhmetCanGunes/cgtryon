@@ -1,4 +1,5 @@
 import React, { useRef, useState, useCallback } from 'react';
+import { useBlobUrl } from '../../../../hooks/useBlobUrl';
 import { Upload, X, Check, BedDouble, Droplets, Camera, SunMedium } from 'lucide-react';
 import { cn } from '../../../../lib/utils';
 import { StudioDropdown, SectionHeader, StudioButton } from '../shared';
@@ -32,7 +33,7 @@ const ProductTab: React.FC<ProductTabProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [selectedBoudoirCategory, setSelectedBoudoirCategory] = useState<string>(settings.boudoirCategory || '');
 
-  const productPreviewUrl = productImage ? URL.createObjectURL(productImage) : null;
+  const productPreviewUrl = useBlobUrl(productImage);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();

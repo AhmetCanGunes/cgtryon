@@ -1,5 +1,4 @@
 export { default as DashboardHome } from './DashboardHome';
-export { default as DashboardSidebar } from './DashboardSidebar';
 export { default as StatsCard } from './StatsCard';
 export { default as ScheduleTimeline } from './ScheduleTimeline';
 export { default as SystemPulse } from './SystemPulse';

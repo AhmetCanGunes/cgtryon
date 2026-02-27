@@ -1,4 +1,5 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
+import { useBlobUrl } from '../hooks/useBlobUrl';
 import { X, Wand2, Loader2, Upload, Layout, Check, Sparkles, Image as ImageIcon, Tag, Star, Save, Trash2, Plus, Play, Heart, BedDouble, ListFilter, Droplets, Box, User, Monitor, LayoutTemplate, Lightbulb, Eye, SunMedium, Camera } from 'lucide-react'; 
 import {
   GenerationSettings,
@@ -358,7 +359,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       }
   };
 
-  const productPreviewUrl = productImage ? URL.createObjectURL(productImage) : null;
+  const productPreviewUrl = useBlobUrl(productImage);
 
   const handleDragOver = useCallback((e: React.DragEvent, setter: React.Dispatch<React.SetStateAction<boolean>>) => {
     e.preventDefault();

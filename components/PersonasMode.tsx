@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useBlobUrl } from '../hooks/useBlobUrl';
 import { cn } from '../lib/utils';
 
 interface Persona {
@@ -34,6 +35,9 @@ const PersonasMode: React.FC<PersonasModeProps> = ({
   const [newPersonaDescription, setNewPersonaDescription] = useState('');
   const [newPersonaImage, setNewPersonaImage] = useState<File | null>(null);
   const [newPersonaNiche, setNewPersonaNiche] = useState('fashion');
+
+  // Blob URL management — guaranteed cleanup via useBlobUrl hook
+  const newPersonaPreview = useBlobUrl(newPersonaImage);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -372,7 +376,7 @@ const PersonasMode: React.FC<PersonasModeProps> = ({
                 >
                   {newPersonaImage ? (
                     <img
-                      src={URL.createObjectURL(newPersonaImage)}
+                      src={newPersonaPreview!}
                       alt="Preview"
                       className="w-full h-full object-cover"
                     />

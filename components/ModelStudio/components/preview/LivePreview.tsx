@@ -1,4 +1,5 @@
 import React from 'react';
+import { useBlobUrl } from '../../../../hooks/useBlobUrl';
 import { Eye, X, ImageOff } from 'lucide-react';
 import { cn } from '../../../../lib/utils';
 import { GenerationSettings } from '../../../../types';
@@ -12,7 +13,7 @@ interface LivePreviewProps {
 }
 
 const LivePreview: React.FC<LivePreviewProps> = ({ productImage, settings, onClose }) => {
-  const productPreviewUrl = productImage ? URL.createObjectURL(productImage) : null;
+  const productPreviewUrl = useBlobUrl(productImage);
 
   // Determine aspect ratio for preview
   const getAspectRatioClass = () => {

@@ -36,7 +36,6 @@ import {
   TryOnSettings,
   AdSettings,
   UpscaleSettings,
-  TryOnV3Settings,
   AdCreativeResult,
   DashboardWidget,
   ActivityItem,
@@ -83,8 +82,6 @@ import {
 import Sidebar from './OldSidebar';
 import ImageDisplay from './ImageDisplay';
 import VirtualTryOnMode from './VirtualTryOnMode';
-import VirtualTryOnModeV2 from './VirtualTryOnModeV2';
-import VirtualTryOnModeV3 from './VirtualTryOnModeV3';
 import AdCreativeMode from './AdCreativeMode';
 import UpscaleMode from './UpscaleMode';
 
@@ -94,8 +91,6 @@ interface AdminPanelProps {
   // Studio generation handlers
   onStudioGenerate: () => Promise<void>;
   onTryOnGenerate: (model: File, garment: File, garment2: File | null, garment3: File | null, settings: TryOnSettings) => Promise<void>;
-  onTryOnV2Generate: (target: File, ref: File, quality: string) => Promise<string>;
-  onTryOnV3Generate: (original: File, product: File, shoe: File | null, settings: TryOnV3Settings) => Promise<string>;
   onAdGenerate: (image: File, adSettings: AdSettings) => Promise<AdCreativeResult[]>;
   onUpscaleGenerate: (image: File, upscaleSettings: UpscaleSettings) => Promise<string>;
   // Studio state
@@ -122,8 +117,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   onBack,
   onStudioGenerate,
   onTryOnGenerate,
-  onTryOnV2Generate,
-  onTryOnV3Generate,
   onAdGenerate,
   onUpscaleGenerate,
   productImage,

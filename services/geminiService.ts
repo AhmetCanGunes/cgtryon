@@ -1,6 +1,7 @@
 
 
-import { GoogleGenAI, Type } from "@google/genai";
+import { Type } from "@google/genai";
+import { callGeminiProxy, callImagenProxy } from "./geminiProxy";
 import { GenerationSettings, TryOnSettings, AdSettings, AdCopy, UpscaleSettings, TryOnV3Settings, AdCreativeResult, AdCreativeMetadata, AD_THEME_VARIATIONS, getVariedBackgrounds, isAccessoryProduct, isWalletProduct, isBagProduct, isShoesProduct, isSunglassesProduct, BRANDED_CONCEPT_PROMPTS, BRANDED_STANCE_PROMPTS, BRANDED_POSE_ENERGY_PROMPTS, BRANDED_CLOTHING_STYLE_PROMPTS, BRANDED_HAIR_STYLE_PROMPTS, BRANDED_EXPRESSION_PROMPTS, BRANDED_PRODUCT_ORIENTATION_PROMPTS, BRANDED_PRODUCT_PLACEMENT_PROMPTS, BRANDED_PRODUCT_CONTEXT_PROMPTS, BRANDED_PRODUCT_CONDITION_PROMPTS, BRANDED_COLOR_TEMPERATURE_PROMPTS, BRANDED_COLOR_HARMONY_PROMPTS, BRANDED_MATERIAL_FINISH_PROMPTS, BRANDED_FRAMING_PROMPTS, BRANDED_DEPTH_PROMPTS, BRANDED_NEGATIVE_SPACE_PROMPTS, BRANDED_ASPECT_RATIO_STYLE_PROMPTS, BRANDED_LIGHTING_TYPE_PROMPTS, BRANDED_SHADOW_QUALITY_PROMPTS, BRANDED_CAPTURE_STYLE_PROMPTS, BRANDED_LENS_PROMPTS, BRANDED_DEPTH_OF_FIELD_PROMPTS, JewelrySettings, JEWELRY_STAND_COLORS, JEWELRY_BACKGROUNDS, MensFashionSettings, MENS_FASHION_POSE_OPTIONS, MENS_FASHION_BACKGROUNDS, MENS_FASHION_BACKGROUND_STYLES, STUDIO_MINIMAL_GRADIENT_COLORS, WomensFashionSettings, WOMENS_FASHION_POSE_OPTIONS, WOMENS_FASHION_BACKGROUNDS, WOMENS_FASHION_BACKGROUND_STYLES, ReferencedProductionSettings, ScenePlacementSettings, REFERENCED_POSE_OPTIONS, SHOT_TYPE_OPTIONS, AnimalSettings, ANIMAL_TYPES, DOG_BREEDS, CAT_BREEDS, BIRD_BREEDS, RABBIT_BREEDS, HORSE_BREEDS, ANIMAL_POSITIONS, ANIMAL_POSES, ANIMAL_SIZES, ANIMAL_LOOK_DIRECTIONS, CollectionResult } from "../types";
 
 // Generation result with AI model info
@@ -9,6 +10,23 @@ export interface GenerationResult {
   aiModel: string;
   estimatedCost: number;
 }
+
+/**
+ * Sanitize user-supplied text before injecting into AI prompts.
+ * Prevents prompt injection by stripping override patterns and limiting length.
+ */
+const sanitizeUserInput = (input: string, maxLength: number = 500): string => {
+  if (!input || typeof input !== 'string') return '';
+  return input
+    .replace(/ignore\s+(all\s+)?(previous|above|prior|earlier)\s+(instructions?|prompts?|rules?|context)/gi, '')
+    .replace(/override\s+(all\s+)?(previous|above|prior|system)\s+(instructions?|prompts?|rules?)/gi, '')
+    .replace(/system\s*:\s*/gi, '')
+    .replace(/\[INST\]/gi, '')
+    .replace(/<\/?s>/gi, '')
+    .replace(/<<SYS>>|<\/SYS>>/gi, '')
+    .trim()
+    .substring(0, maxLength);
+};
 
 const processImageForGemini = async (
     file: File, 
@@ -70,6 +88,9 @@ const processImageForGemini = async (
 };
 
 export const dataURLtoFile = (dataurl: string, filename: string): File => {
+  if (!dataurl || !dataurl.includes(',')) {
+    throw new Error('Invalid data URL format');
+  }
   const arr = dataurl.split(',');
   const mimeMatch = arr[0].match(/:(.*?);/);
   const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
@@ -175,13 +196,17 @@ const getClosestAspectRatio = (width: number, height: number): string => {
 };
 
 // --- SAFETY SETTINGS ---
+// SEXUALLY_EXPLICIT kept as BLOCK_NONE for lingerie/boudoir mode; others tightened
 const SAFETY_SETTINGS = [
-    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
     { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-    { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' }
+    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+    { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_MEDIUM_AND_ABOVE' }
 ];
+
+// --- BATCH SIZE LIMIT ---
+const MAX_BATCH_SIZE = 10;
 
 const ANATOMY_PROMPT = `
 CRITICAL ANATOMY & QUALITY ASSURANCE:
@@ -521,7 +546,7 @@ export const generateModelImage = async (
   settings: GenerationSettings
 ): Promise<string> => {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // API key is now server-side (Cloud Function proxy)
 
     const useProModel = settings.modelQuality.includes('Pro') || settings.modelQuality.includes('Nano');
     const modelName = useProModel 
@@ -1699,7 +1724,7 @@ export const generateModelImage = async (
     }
 
     if (settings.aspectRatio.includes('4:5')) prompt += `\n- Composition: Frame for 4:5 vertical portrait.`;
-    if (settings.customPrompt) prompt += `\n\nAdditional Instructions: ${settings.customPrompt}`;
+    if (settings.customPrompt) prompt += `\n\nAdditional Instructions: ${sanitizeUserInput(settings.customPrompt)}`;
 
     prompt += `\n\nCRITICAL QUALITY REQUIREMENTS:
     - RESOLUTION: Ultra-high resolution, 8K quality, maximum detail preservation
@@ -1955,11 +1980,7 @@ export const generateModelImage = async (
          config.imageConfig.imageSize = '2K'; // Always 2K for maximum sharpness
     }
 
-    const response = await ai.models.generateContent({
-        model: modelName,
-        contents: { parts },
-        config: config
-    });
+    const response = await callGeminiProxy(modelName, { parts }, config);
 
     const imageData = extractImageFromResponse(response);
     if (imageData) return imageData;
@@ -1990,7 +2011,7 @@ export const generateVirtualTryOn = async (
     additionalGarments?: File[] // Yeni: 4+ kıyafet için
   ): Promise<string> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // API key is now server-side (Cloud Function proxy)
 
         const useProModel = settings.modelQuality.includes('Pro') || settings.modelQuality.includes('Nano');
         const modelName = useProModel
@@ -2270,7 +2291,7 @@ ${Array.from({length: garmentCount}, (_, i) => `             - Image ${i + 2}: G
           }
       }
   
-      if (settings.description) prompt += `\nAdditional Instructions: ${settings.description}`;
+      if (settings.description) prompt += `\nAdditional Instructions: ${sanitizeUserInput(settings.description)}`;
       if (settings.aspectRatio.includes('4:5')) prompt += `\nOutput Composition: 4:5 vertical portrait.`;
 
       prompt += ANATOMY_PROMPT;
@@ -2309,11 +2330,7 @@ OUTPUT = Model wearing ALL ${garmentCount} garments (including jacket if provide
             config.imageConfig.imageSize = settings.resolution.includes('2K') ? '2K' : '1K';
       }
   
-      const response = await ai.models.generateContent({
-          model: modelName,
-          contents: { parts },
-          config: config
-      });
+      const response = await callGeminiProxy(modelName, { parts }, config);
 
       // Debug: Log response structure
       console.log('🔍 Try-On Response:', {
@@ -2354,7 +2371,7 @@ const generateSmartAdCopy = async (
     productUrl: string, 
     theme: string
 ): Promise<AdCopy[]> => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // API key is now server-side (Cloud Function proxy)
     
     const model = 'gemini-2.5-flash';
 
@@ -2397,22 +2414,18 @@ const generateSmartAdCopy = async (
     };
 
     try {
-        const response = await ai.models.generateContent({
-            model: model,
-            contents: {
+        const response = await callGeminiProxy(model, {
                 parts: [
                     { inlineData: { data: base64, mimeType: mimeType } },
                     { text: contextPrompt }
                 ]
-            },
-            config: {
+            }, {
                 responseMimeType: "application/json",
                 responseSchema: adCopySchema,
                 temperature: 0.9,
                 safetySettings: SAFETY_SETTINGS
-            }
-        });
-        
+            });
+
         const jsonText = safeGetText(response) || "[]";
         let parsed = JSON.parse(jsonText);
         
@@ -2447,7 +2460,7 @@ export const generateAdCreative = async (
     productImage: File,
     settings: AdSettings
 ): Promise<AdCreativeResult[]> => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // API key is now server-side (Cloud Function proxy)
     let { base64, mimeType } = await processImageForGemini(productImage);
 
     const preferredModel = 'gemini-3-pro-image-preview';
@@ -2660,17 +2673,13 @@ ${settings.weather && !settings.weather.includes('Seçiniz') ? `               -
         };
 
         try {
-             const imageResponse = await ai.models.generateContent({
-                model: preferredModel,
-                contents: {
+             const imageResponse = await callGeminiProxy(preferredModel, {
                     parts: [
                         { inlineData: { data: base64, mimeType: mimeType } },
                         { text: imagePrompt }
                     ]
-                },
-                config: imageConfig
-            });
-            
+                }, imageConfig);
+
             const imageUrl = extractImageFromResponse(imageResponse);
             if (!imageUrl) throw new Error("No image data");
 
@@ -2696,15 +2705,23 @@ ${settings.weather && !settings.weather.includes('Seçiniz') ? `               -
         }
     };
 
-    try {
-        const promises = promptsToUse.map((p, idx) => generateSingleImage(p, idx));
-        const results = await Promise.all(promises);
-        return results;
-    } catch (error: any) {
-        if (error.status === 429) throw new Error("Kota aşıldı (429). Çok fazla varyasyon aynı anda istendi.");
-        if (error.message?.includes('Safety')) throw new Error("Güvenlik filtresine takıldı. Lütfen promptu kontrol edin.");
-        throw error;
+    // Sequential generation with rate limiting and per-item error handling
+    const results: AdCreativeResult[] = [];
+    for (let idx = 0; idx < promptsToUse.length; idx++) {
+        if (idx > 0) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        try {
+            const result = await generateSingleImage(promptsToUse[idx], idx);
+            results.push(result);
+        } catch (error: any) {
+            console.error(`Ad creative ${idx + 1}/${promptsToUse.length} failed:`, error.message);
+        }
     }
+    if (results.length === 0) {
+        throw new Error("Hiçbir görsel oluşturulamadı. Lütfen tekrar deneyin.");
+    }
+    return results;
 };
 
 export const generateSimilarAdCreative = async (
@@ -2712,7 +2729,7 @@ export const generateSimilarAdCreative = async (
     referenceMetadata: AdCreativeMetadata,
     count: number
 ): Promise<AdCreativeResult[]> => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // API key is now server-side (Cloud Function proxy)
     const { base64, mimeType } = await processImageForGemini(productImage);
     const preferredModel = 'gemini-3-pro-image-preview';
     
@@ -2811,17 +2828,13 @@ export const generateSimilarAdCreative = async (
             safetySettings: SAFETY_SETTINGS
         };
 
-        const imageResponse = await ai.models.generateContent({
-            model: preferredModel,
-            contents: {
+        const imageResponse = await callGeminiProxy(preferredModel, {
                 parts: [
                     { inlineData: { data: base64, mimeType: mimeType } },
                     { text: imagePrompt }
                 ]
-            },
-            config: imageConfig
-        });
-        
+            }, imageConfig);
+
         const imageUrl = extractImageFromResponse(imageResponse);
         if (!imageUrl) throw new Error("No image generated");
 
@@ -2832,13 +2845,24 @@ export const generateSimilarAdCreative = async (
         };
     };
 
-    try {
-        const promises = Array.from({ length: count }).map((_, idx) => generateIteration(idx));
-        return await Promise.all(promises);
-    } catch (error: any) {
-        console.error("Generate Similar Error", error);
-        throw error;
+    // Sequential generation with rate limiting and per-item error handling
+    const safeCount = Math.min(Math.max(1, count), MAX_BATCH_SIZE);
+    const results: AdCreativeResult[] = [];
+    for (let idx = 0; idx < safeCount; idx++) {
+        if (idx > 0) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        try {
+            const result = await generateIteration(idx);
+            results.push(result);
+        } catch (error: any) {
+            console.error(`Similar ad ${idx + 1}/${count} failed:`, error.message);
+        }
     }
+    if (results.length === 0) {
+        throw new Error("Hiçbir benzer görsel oluşturulamadı. Lütfen tekrar deneyin.");
+    }
+    return results;
 };
 
 // --- COLLECTION MODE (No text overlays) ---
@@ -2849,7 +2873,7 @@ export const generateCollectionImage = async (
     customPrompt: string,
     numberOfImages: number
 ): Promise<CollectionResult[]> => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // API key is now server-side (Cloud Function proxy)
     const preferredModel = 'gemini-3-pro-image-preview';
 
     // Process all images in parallel
@@ -2882,7 +2906,7 @@ export const generateCollectionImage = async (
 
         let customPromptSection = "";
         if (customPrompt && customPrompt.trim().length > 0) {
-            customPromptSection = `\nADDITIONAL USER INSTRUCTION: ${customPrompt.trim()}`;
+            customPromptSection = `\nADDITIONAL USER INSTRUCTION: ${sanitizeUserInput(customPrompt)}`;
         }
 
         const sceneInstruction = processedScene
@@ -2946,11 +2970,7 @@ ${CLEAN_BACKGROUND_PROMPT}
         };
 
         try {
-            const imageResponse = await ai.models.generateContent({
-                model: preferredModel,
-                contents: { parts: imageParts },
-                config: imageConfig
-            });
+            const imageResponse = await callGeminiProxy(preferredModel, { parts: imageParts }, imageConfig);
 
             const imageUrl = extractImageFromResponse(imageResponse);
             if (!imageUrl) throw new Error("No image data");
@@ -2969,315 +2989,38 @@ ${CLEAN_BACKGROUND_PROMPT}
         }
     };
 
-    try {
-        // Sequential generation with 2s delay to avoid rate limiting
-        const results: CollectionResult[] = [];
-        for (let i = 0; i < numberOfImages; i++) {
-            if (i > 0) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
-            }
+    // Sequential generation with 2s delay to avoid rate limiting
+    // Per-item error handling: failed images are skipped, successful ones are returned
+    const safeCount = Math.min(Math.max(1, numberOfImages), MAX_BATCH_SIZE);
+    const results: CollectionResult[] = [];
+    for (let i = 0; i < safeCount; i++) {
+        if (i > 0) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        try {
             const result = await generateSingleImage(i);
             results.push(result);
+        } catch (error: any) {
+            console.error(`Collection image ${i + 1}/${numberOfImages} failed:`, error.message);
+            // Continue with remaining images
         }
-        return results;
-    } catch (error: any) {
-        if (error.status === 429) throw new Error("Kota aşıldı (429). Çok fazla istek gönderildi, lütfen bekleyin.");
-        if (error.message?.includes('Safety')) throw new Error("Güvenlik filtresine takıldı. Lütfen promptu kontrol edin.");
-        throw error;
     }
+    if (results.length === 0) {
+        throw new Error("Hiçbir görsel oluşturulamadı. Lütfen tekrar deneyin.");
+    }
+    return results;
 };
 
-export const generateVirtualTryOnV2 = async (
-    targetModel: File,
-    referenceOutfitModel: File,
-    modelQuality: string
-): Promise<string> => {
-    try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        
-        const modelName = modelQuality.includes('Pro') || modelQuality.includes('Nano')
-            ? 'gemini-3-pro-image-preview' 
-            : 'gemini-2.5-flash-image';
-        
-        console.log(`Generating Virtual Try-On V2 (Identity Swap) with model: ${modelName}`);
-
-        const [processedTarget, processedRef] = await Promise.all([
-            processImageForGemini(targetModel, 2048, 0.90),
-            processImageForGemini(referenceOutfitModel, 2048, 0.95)
-        ]);
-
-        const targetAspectRatio = getClosestAspectRatio(processedRef.width, processedRef.height);
-
-        const parts: any[] = [
-            { inlineData: { data: processedTarget.base64, mimeType: processedTarget.mimeType } },
-            { inlineData: { data: processedRef.base64, mimeType: processedRef.mimeType } }
-        ];
-
-        const prompt = `
-            ADVANCED IDENTITY SWAP & FACE REPLACEMENT TASK (V2 - REALISM FOCUS).
-            INPUTS: 
-            - IMAGE 1: Source Identity (Face/Head).
-            - IMAGE 2: Target Body & Environment (Outfit/Pose).
-            
-            GOAL: Seamlessly integrate the face from Image 1 onto the body in Image 2.
-
-            CRITICAL REALISM INSTRUCTIONS (PRIORITY #1):
-            1. SKIN TEXTURE: The face MUST have high-frequency skin texture (pores, wrinkles, peach fuzz, imperfections). DO NOT GENERATE SMOOTH, PLASTIC, OR WAXY SKIN.
-            2. LIGHTING MATCH: Analyze the lighting in Image 2 (direction, hardness, color temperature). The new face must be lit EXACTLY the same way. Shadows on the face must match the neck and environment.
-            3. GRAIN & NOISE: Match the ISO/film grain of Image 2. If Image 2 is grainy, the face must be grainy. If Image 2 is sharp, the face must be sharp.
-            4. COLOR GRADING: The skin tone of the face must match the skin tone of the neck/hands in Image 2. Do not leave a color cast difference at the neck seam.
-            5. REFLECTIONS: If there are mirrors, update reflections.
-
-            IDENTITY PRESERVATION:
-            - Transfer the facial structure (eye shape, nose shape, jawline) of Image 1.
-            - Adapt the head angle/tilt to match the pose in Image 2 perfectly.
-
-            EXECUTION STEPS:
-            - Keep Image 2 pixel-perfect (Background, Outfit, Hair if possible, Body).
-            - Only replace the facial region.
-            - Ensure subsurface scattering (light penetrating skin) for a lifelike look.
-            
-            OUTPUT:
-            - Photorealistic, Cinematic Lighting.
-            - NO AI ARTIFACTS (No blurring, no smudging).
-            ${ANATOMY_PROMPT}
-        `;
-
-        parts.push({ text: prompt });
-
-        const config: any = {
-            imageConfig: {
-                aspectRatio: targetAspectRatio, 
-                imageSize: modelName.includes('pro') ? '2K' : '1K'
-            },
-            safetySettings: SAFETY_SETTINGS
-        };
-
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: { parts },
-            config: config
-        });
-
-        const imageData = extractImageFromResponse(response);
-        if (imageData) return imageData;
-
-        throw new Error("No image generated by Gemini for Try-On V2.");
-
-    } catch (error: any) {
-        console.error("Gemini Try-On V2 Error:", error);
-        if (error.status === 429) throw new Error("Kota aşıldı (429).");
-        if (error.message?.includes('Safety')) throw error;
-        throw new Error("V2 işlemi başarısız oldu.");
-    }
-};
-
-export const generateVirtualTryOnV3 = async (
-    originalPhoto: File,
-    productImage: File,
-    shoePhoto: File | null,
-    settings: TryOnV3Settings
-): Promise<string> => {
-    try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        
-        const modelName = 'gemini-3-pro-image-preview';
-        
-        console.log(`Generating Virtual Try-On V3 (Product Swap) with model: ${modelName}`);
-
-        const imageProcessingPromises = [
-            processImageForGemini(originalPhoto, 2048, 0.95),
-            processImageForGemini(productImage, 2048, 0.95)
-        ];
-
-        if (shoePhoto) {
-            imageProcessingPromises.push(processImageForGemini(shoePhoto, 2048, 0.95));
-        }
-
-        const results = await Promise.all(imageProcessingPromises);
-        const processedOriginal = results[0];
-        const processedProduct = results[1];
-        const processedShoe = results.length > 2 ? results[2] : null;
-
-        const targetAspectRatio = getClosestAspectRatio(processedOriginal.width, processedOriginal.height);
-
-        const parts: any[] = [
-            { inlineData: { data: processedOriginal.base64, mimeType: processedOriginal.mimeType } },
-            { inlineData: { data: processedProduct.base64, mimeType: processedProduct.mimeType } }
-        ];
-
-        if (processedShoe) {
-            parts.push({ inlineData: { data: processedShoe.base64, mimeType: processedShoe.mimeType } });
-        }
-
-        const preservePose = settings.pose === 'original';
-        const preserveBackground = settings.background === 'original';
-        const preserveAngle = settings.viewAngle === 'original';
-
-        let transformationPrompt = "";
-        let preservationPrompt = "";
-
-        if (preservePose) {
-            preservationPrompt += "\n- POSE: MUST REMAIN EXACTLY THE SAME as Image 1.";
-        } else {
-            transformationPrompt += `\n- POSE CHANGE: Transform the model into this pose: "${settings.pose}". Ensure the clothing adapts naturally.`;
-        }
-
-        if (preserveBackground) {
-            preservationPrompt += "\n- BACKGROUND: MUST REMAIN EXACTLY THE SAME as Image 1.";
-        } else {
-            let backgroundDescription = settings.background;
-            if (settings.theme && settings.sceneVariation && settings.sceneVariation !== 'auto') {
-                const themeVariations = AD_THEME_VARIATIONS[settings.theme] || [];
-                const selectedVariation = themeVariations.find(v => v.id === settings.sceneVariation);
-                if (selectedVariation) {
-                    backgroundDescription = selectedVariation.prompt;
-                }
-            } else if (settings.theme && settings.sceneVariation === 'auto') {
-                const themeVariations = AD_THEME_VARIATIONS[settings.theme] || [];
-                if (themeVariations.length > 0) {
-                    const randomVariation = themeVariations[Math.floor(Math.random() * themeVariations.length)];
-                    backgroundDescription = randomVariation.prompt;
-                }
-            }
-            transformationPrompt += `\n- BACKGROUND CHANGE: Transport the model to: "${backgroundDescription}". Ensure lighting matches this new environment.`;
-        }
-
-        if (!preserveAngle) {
-            transformationPrompt += `\n- VIEW ANGLE: Change camera angle to: "${settings.viewAngle}".`;
-        }
-
-        let shoeInstruction = "";
-        if (processedShoe) {
-            shoeInstruction = "\n- SHOE SWAP: Replace the model's shoes with the shoes from Image 3.";
-        } else {
-            shoeInstruction = "\n- SHOES: Keep original shoes if they match, or ensure full outfit coherence.";
-        }
-
-        let atmospherePrompt = "";
-        if (settings.season && !settings.season.includes('Seçiniz') && !settings.season.includes('Otomatik')) {
-            atmospherePrompt += `\n- SEASON: ${settings.season}. Adjust lighting, colors, and atmosphere to match this season.`;
-        }
-        if (settings.weather && !settings.weather.includes('Seçiniz') && !settings.weather.includes('Otomatik')) {
-            atmospherePrompt += `\n- WEATHER: ${settings.weather}. Ensure lighting and environmental conditions reflect this weather.`;
-        }
-
-        const prompt = `
-            VIRTUAL TRY-ON V3: AI STYLING STUDIO.
-            INPUTS:
-            - IMAGE 1: Base Photo (Model).
-            - IMAGE 2: New Garment (Product).
-            ${processedShoe ? '- IMAGE 3: New Shoes (Product).' : ''}
-
-            GOAL: Create a photorealistic fashion image.
-
-            🔒 TUTARLILIK KURALLARI - MUTLAKA UYGULA 🔒
-
-            1. KİMLİK KORUMA (Image 1'deki kişi):
-               - Image 1'deki AYNI kişiyi kullan
-               - Yüz, ten rengi, saç rengi/stili, vücut tipi AYNI kalmalı
-               - Farklı bir kişi/manken üretme
-               - Yüz hatlarını, göz rengini, cilt tonunu değiştirme
-
-            2. ÜRÜN TUTARLILIĞI:
-               - SADECE Image 2'deki ürünü kullan (ve varsa Image 3'teki ayakkabı)
-               - Ürünün rengini, desenini, dokusunu değiştirme
-               - Ek kıyafet ekleme
-
-            3. SEÇİLEN AYARLARI UYGULA:
-               - Seçilen poz: ${preservePose ? 'Orijinal pozu koru' : settings.pose}
-               - Seçilen arka plan: ${preserveBackground ? 'Orijinal arka planı koru' : settings.background}
-               - Bunların dışına çıkma
-
-            ⚠️ CRITICAL PRODUCT FIDELITY RULES (ABSOLUTE HIGHEST PRIORITY) ⚠️:
-
-            GARMENT FROM IMAGE 2 MUST BE REPLICATED WITH PERFECT ACCURACY:
-            1. EXACT COLOR: Use the EXACT color/shade from Image 2. NO color variations or adjustments.
-            2. EXACT PATTERN: If the garment has patterns, prints, or graphics, replicate them PRECISELY.
-            3. EXACT TEXTURE: Maintain the fabric type and texture exactly as shown in Image 2.
-            4. EXACT STYLE DETAILS: All design elements MUST match Image 2:
-               - Buttons, zippers, pockets, collars, cuffs, seams
-               - Any logos, text, or graphics on the garment
-               - Stitching patterns and decorative elements
-            5. EXACT STRUCTURE:
-               - Sleeve length MUST match (long sleeves stay long, short sleeves stay short)
-               - Neckline MUST match (V-neck, crew neck, turtleneck, etc.)
-               - Hemline/Length MUST match (cropped, regular, long)
-               - Fit/Silhouette MUST match (oversized, fitted, loose, etc.)
-            6. FULL VISIBILITY: The garment MUST be COMPLETELY VISIBLE on the model. Do NOT hide or crop any part.
-            7. NO MODIFICATIONS: Do NOT add, remove, or change ANY design elements.
-            8. TREAT IMAGE 2 AS ABSOLUTE REFERENCE: Perfect 1:1 replication required.
-
-            ${processedShoe ? `
-            SHOES FROM IMAGE 3 MUST BE REPLICATED WITH PERFECT ACCURACY:
-            - EXACT color, style, and design from Image 3
-            - FULL VISIBILITY of the shoes
-            - NO modifications to the shoe design
-            ` : ''}
-
-            CORE INSTRUCTIONS:
-            1. IDENTITY: Preserve facial features and body shape of Model in Image 1.
-            2. CLOTHING: Dress the model in the Garment from Image 2 with PERFECT FIDELITY (see rules above).
-            ${shoeInstruction}
-
-            SCENE & POSE LOGIC:
-            ${preservePose && preserveBackground ? 'This is a strict IN-PLACE EDIT.' : 'This is a CREATIVE RE-IMAGINING.'}
-            ${preservationPrompt}
-            ${transformationPrompt}
-            ${atmospherePrompt}
-
-            ⚠️ CAMERA ANGLE & FRAMING RULES ⚠️:
-            - Use a camera angle that ensures the ENTIRE garment is visible.
-            - For jackets/coats/outerwear: Use full body or 3/4 body shot (head to knees minimum).
-            - AVOID extreme low angles or close-ups that hide parts of the garment.
-            - The garment should be the OUTERMOST layer and clearly visible.
-            - Frame the shot to show the complete outfit from top to bottom.
-
-            OUTPUT QUALITY:
-            - Photorealistic, 4K, undetectable edit.
-            - Lighting must be consistent across model, clothes, and background.
-            - The garment MUST look exactly like Image 2 - this is NON-NEGOTIABLE.
-            ${ANATOMY_PROMPT}
-            ${CLEAN_BACKGROUND_PROMPT}
-            ${PRODUCT_FIDELITY_PROMPT}
-        `;
-
-        parts.push({ text: prompt });
-
-        const config: any = {
-            imageConfig: {
-                aspectRatio: targetAspectRatio, 
-                imageSize: '2K'
-            },
-            safetySettings: SAFETY_SETTINGS
-        };
-
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: { parts },
-            config: config
-        });
-
-        const imageData = extractImageFromResponse(response);
-        if (imageData) return imageData;
-
-        throw new Error("No image generated by Gemini for Try-On V3.");
-
-    } catch (error: any) {
-        console.error("Gemini Try-On V3 Error:", error);
-        if (error.status === 429) throw new Error("Kota aşıldı (429).");
-        if (error.message?.includes('Safety')) throw error;
-        throw new Error("V3 işlemi başarısız oldu.");
-    }
-};
+// ============================================================
+// UPSCALE MODE
+// ============================================================
 
 export const upscaleImage = async (
     image: File,
     settings: UpscaleSettings
 ): Promise<string> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const modelName = 'gemini-3-pro-image-preview'; 
+        const modelName = 'gemini-3-pro-image-preview';
 
         const { base64, mimeType, width, height } = await processImageForGemini(image, 2048, 0.95);
         const aspectRatio = getClosestAspectRatio(width, height);
@@ -3295,23 +3038,19 @@ export const upscaleImage = async (
         `;
 
         const config: any = {
-             imageConfig: {
+            imageConfig: {
                 aspectRatio: aspectRatio,
-                imageSize: '2K' 
+                imageSize: '2K'
             },
             safetySettings: SAFETY_SETTINGS
         };
 
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: {
-                parts: [
-                    { inlineData: { data: base64, mimeType } },
-                    { text: prompt }
-                ]
-            },
-            config: config
-        });
+        const response = await callGeminiProxy(modelName, {
+            parts: [
+                { inlineData: { data: base64, mimeType } },
+                { text: prompt }
+            ]
+        }, config);
 
         const imageData = extractImageFromResponse(response);
         if (imageData) return imageData;
@@ -3321,279 +3060,6 @@ export const upscaleImage = async (
     } catch (error: any) {
         if (error.status === 429) throw new Error("Kota aşıldı (429).");
         if (error.message?.includes('Safety')) throw error;
-        throw error;
-    }
-};
-
-// ==========================================
-// GÖRSEL ARAÇLARI - IMAGE TOOLS
-// ==========================================
-
-// Background Remover - Arka Plan Silme
-export const removeBackground = async (
-    imageFile: File,
-    outputFormat: 'transparent' | 'white' | 'custom' = 'transparent',
-    customBgColor?: string
-): Promise<string> => {
-    try {
-        const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-        const modelName = "gemini-2.0-flash-exp";
-
-        const { base64, mimeType } = await processImageForGemini(imageFile, 2048, 0.95);
-
-        let backgroundInstruction = "";
-        switch (outputFormat) {
-            case 'transparent':
-                backgroundInstruction = "Make the background completely TRANSPARENT (alpha channel = 0). Output as PNG with transparency.";
-                break;
-            case 'white':
-                backgroundInstruction = "Replace the background with PURE WHITE (#FFFFFF).";
-                break;
-            case 'custom':
-                backgroundInstruction = `Replace the background with the color: ${customBgColor || '#FFFFFF'}.`;
-                break;
-        }
-
-        const prompt = `
-            BACKGROUND REMOVAL TASK - PROFESSIONAL E-COMMERCE QUALITY
-
-            OBJECTIVE: Remove the background from this image while preserving the subject with pixel-perfect precision.
-
-            CRITICAL INSTRUCTIONS:
-            1. SUBJECT ISOLATION: Identify and isolate the main subject (product, person, or object) with extreme precision.
-            2. EDGE QUALITY: Preserve fine details like hair, fur, fabric threads, and transparent materials (glass, lace, etc.).
-            3. NO ARTIFACTS: Ensure clean edges with no halos, fringing, or color bleeding.
-            4. SHADOW HANDLING: Remove background shadows but preserve natural product shadows if they add depth.
-            5. ${backgroundInstruction}
-
-            QUALITY REQUIREMENTS:
-            - Maintain original image resolution and quality
-            - Preserve all colors and textures of the subject
-            - Clean, professional cutout suitable for e-commerce
-            - No visible edge artifacts or rough transitions
-
-            OUTPUT: High-quality image with background removed as specified.
-        `;
-
-        const parts: any[] = [
-            { inlineData: { data: base64, mimeType: mimeType } },
-            { text: prompt }
-        ];
-
-        const config: any = {
-            responseModalities: ["image", "text"],
-            imageConfig: {
-                imageSize: '2K'
-            },
-            safetySettings: SAFETY_SETTINGS
-        };
-
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: { parts },
-            config: config
-        });
-
-        const imageData = extractImageFromResponse(response);
-        if (imageData) {
-            console.log("✅ Background removed successfully");
-            return imageData;
-        }
-
-        throw new Error("Background removal failed - no image generated.");
-
-    } catch (error: any) {
-        console.error("Background Removal Error:", error);
-        if (error.status === 429) throw new Error("Kota aşıldı (429).");
-        throw error;
-    }
-};
-
-// Color Variation Generator - Renk Varyasyonu Oluşturucu
-export const generateColorVariation = async (
-    imageFile: File,
-    targetColor: string,
-    preserveTexture: boolean = true
-): Promise<string> => {
-    try {
-        const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-        const modelName = "gemini-2.0-flash-exp";
-
-        const { base64, mimeType } = await processImageForGemini(imageFile, 2048, 0.95);
-
-        const textureInstruction = preserveTexture
-            ? "CRITICAL: Preserve ALL textures, patterns, stitching, and material details. Only change the base color while maintaining fabric weave, leather grain, knit patterns, etc."
-            : "Apply the color change uniformly.";
-
-        const prompt = `
-            COLOR VARIATION TASK - PRODUCT RECOLORING
-
-            OBJECTIVE: Change the color of the main product/garment in this image to: ${targetColor}
-
-            CRITICAL INSTRUCTIONS:
-            1. COLOR CHANGE: Transform the main product's color to ${targetColor}.
-            2. ${textureInstruction}
-            3. REALISM: The color change must look natural and realistic, as if the product was manufactured in this color.
-            4. LIGHTING PRESERVATION: Maintain all highlights, shadows, and lighting effects - just shift the hue.
-            5. MATERIAL FIDELITY: Different materials should reflect the new color appropriately (matte vs shiny, cotton vs silk, etc.).
-
-            PRESERVE EXACTLY:
-            - Background (keep unchanged)
-            - Model/mannequin appearance (if present)
-            - Accessories and hardware (zippers, buttons, logos) - keep original colors unless specified
-            - Image composition and framing
-            - All product details, stitching, and structural elements
-
-            COLOR APPLICATION:
-            - Target Color: ${targetColor}
-            - Apply color naturally considering the material type
-            - Maintain color depth and richness
-            - Keep realistic color variation (slight natural gradients, not flat)
-
-            OUTPUT: High-quality image with the product recolored to ${targetColor}.
-        `;
-
-        const parts: any[] = [
-            { inlineData: { data: base64, mimeType: mimeType } },
-            { text: prompt }
-        ];
-
-        const config: any = {
-            responseModalities: ["image", "text"],
-            imageConfig: {
-                imageSize: '2K'
-            },
-            safetySettings: SAFETY_SETTINGS
-        };
-
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: { parts },
-            config: config
-        });
-
-        const imageData = extractImageFromResponse(response);
-        if (imageData) {
-            console.log(`✅ Color variation generated: ${targetColor}`);
-            return imageData;
-        }
-
-        throw new Error("Color variation failed - no image generated.");
-
-    } catch (error: any) {
-        console.error("Color Variation Error:", error);
-        if (error.status === 429) throw new Error("Kota aşıldı (429).");
-        throw error;
-    }
-};
-
-// Batch Color Variations - Toplu Renk Varyasyonları
-export const generateBatchColorVariations = async (
-    imageFile: File,
-    colors: string[],
-    preserveTexture: boolean = true,
-    onProgress?: (completed: number, total: number, color: string) => void
-): Promise<{ color: string; imageUrl: string }[]> => {
-    const results: { color: string; imageUrl: string }[] = [];
-    const total = colors.length;
-
-    for (let i = 0; i < colors.length; i++) {
-        const color = colors[i];
-        try {
-            if (onProgress) {
-                onProgress(i, total, color);
-            }
-            const imageUrl = await generateColorVariation(imageFile, color, preserveTexture);
-            results.push({ color, imageUrl });
-        } catch (error) {
-            console.error(`Failed to generate ${color} variation:`, error);
-            // Continue with other colors even if one fails
-        }
-    }
-
-    return results;
-};
-
-// Image Enhancement - Görsel İyileştirme
-export const enhanceImage = async (
-    imageFile: File,
-    enhancementType: 'sharpen' | 'denoise' | 'colorCorrect' | 'all' = 'all'
-): Promise<string> => {
-    try {
-        const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-        const modelName = "gemini-2.0-flash-exp";
-
-        const { base64, mimeType } = await processImageForGemini(imageFile, 2048, 0.95);
-
-        let enhancementPrompt = "";
-        switch (enhancementType) {
-            case 'sharpen':
-                enhancementPrompt = "Enhance sharpness and clarity while avoiding over-sharpening artifacts.";
-                break;
-            case 'denoise':
-                enhancementPrompt = "Remove noise and grain while preserving fine details and textures.";
-                break;
-            case 'colorCorrect':
-                enhancementPrompt = "Correct white balance, enhance color accuracy, and optimize exposure.";
-                break;
-            case 'all':
-                enhancementPrompt = "Apply comprehensive enhancement: sharpen details, reduce noise, correct colors, and optimize exposure for e-commerce quality.";
-                break;
-        }
-
-        const prompt = `
-            IMAGE ENHANCEMENT TASK - E-COMMERCE QUALITY OPTIMIZATION
-
-            OBJECTIVE: Enhance this product image for professional e-commerce use.
-
-            ENHANCEMENT INSTRUCTIONS:
-            ${enhancementPrompt}
-
-            QUALITY REQUIREMENTS:
-            1. SHARPNESS: Crisp, clear product details
-            2. COLOR: Accurate, vibrant but natural colors
-            3. EXPOSURE: Well-balanced lighting, no blown highlights or crushed shadows
-            4. NOISE: Clean, noise-free image
-            5. PROFESSIONAL: E-commerce ready, catalog quality
-
-            PRESERVE:
-            - Original composition and framing
-            - Product authenticity and true colors
-            - All important details and textures
-
-            OUTPUT: Enhanced high-quality image ready for e-commerce use.
-        `;
-
-        const parts: any[] = [
-            { inlineData: { data: base64, mimeType: mimeType } },
-            { text: prompt }
-        ];
-
-        const config: any = {
-            responseModalities: ["image", "text"],
-            imageConfig: {
-                imageSize: '2K'
-            },
-            safetySettings: SAFETY_SETTINGS
-        };
-
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: { parts },
-            config: config
-        });
-
-        const imageData = extractImageFromResponse(response);
-        if (imageData) {
-            console.log("✅ Image enhanced successfully");
-            return imageData;
-        }
-
-        throw new Error("Image enhancement failed - no image generated.");
-
-    } catch (error: any) {
-        console.error("Image Enhancement Error:", error);
-        if (error.status === 429) throw new Error("Kota aşıldı (429).");
         throw error;
     }
 };
@@ -3890,7 +3356,7 @@ export const generateJewelryImage = async (
     onProgress?: (message: string) => void
 ): Promise<JewelryGenerationResult> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // API key is now server-side (Cloud Function proxy)
         // Nano Banana Pro model for highest quality jewelry images
         const modelName = "gemini-3-pro-image-preview";
 
@@ -3929,11 +3395,7 @@ export const generateJewelryImage = async (
             }
         };
 
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: { parts },
-            config: config
-        });
+        const response = await callGeminiProxy(modelName, { parts }, config);
 
         const imageData = extractImageFromResponse(response);
 
@@ -4114,7 +3576,7 @@ DO NOT skip this instruction. DO NOT forget the animal.
 Include a CUSTOM animal companion in this photo as specified by the user.
 
 CUSTOM ANIMAL DESCRIPTION (USER SPECIFIED):
-"${animal.customAnimal}"
+"${sanitizeUserInput(animal.customAnimal || '', 200)}"
 
 ⚠️ CRITICAL: Generate EXACTLY the animal described above. Follow the user's description precisely.
 
@@ -4935,7 +4397,7 @@ const buildCompactJSONPrompt = (settings: MensFashionSettings, gender: 'male' | 
     if (settings.shirtTuck && settings.shirtTuck !== 'auto') config.shirtTuck = settings.shirtTuck;
 
     // Özel talimat varsa
-    if (settings.customPrompt) config.customInstruction = settings.customPrompt;
+    if (settings.customPrompt) config.customInstruction = sanitizeUserInput(settings.customPrompt);
 
     return `GÖREV: Verilen TÜM kıyafetleri ${gender === 'male' ? 'erkek' : 'kadın'} mankene giydir.
 
@@ -5024,7 +4486,7 @@ const buildCompactJSONPromptWomen = (settings: WomensFashionSettings): string =>
     if (settings.backgroundStyle === 'wood' && settings.woodType) {
         settingsJSON.woodType = settings.woodType;
     }
-    if (settings.customPrompt) settingsJSON.customInstructions = settings.customPrompt;
+    if (settings.customPrompt) settingsJSON.customInstructions = sanitizeUserInput(settings.customPrompt);
 
     return `VIRTUAL TRY-ON TASK - Dress model with ALL provided clothing images:
 
@@ -5564,7 +5026,7 @@ ${customPrompt ? `
 
 ✏️✏️✏️ USER'S CUSTOM INSTRUCTIONS - MUST FOLLOW ✏️✏️✏️
 The user has provided specific instructions that MUST be followed:
->>> ${customPrompt} <<<
+>>> ${sanitizeUserInput(customPrompt)} <<<
 ⚡ Apply these instructions to the output
 ⚡ These are direct orders from the user - prioritize them
 ` : ''}
@@ -6034,7 +5496,7 @@ ${customPrompt ? `
 
 ✏️✏️✏️ USER'S CUSTOM INSTRUCTIONS - MUST FOLLOW ✏️✏️✏️
 The user has provided specific instructions that MUST be followed:
->>> ${customPrompt} <<<
+>>> ${sanitizeUserInput(customPrompt)} <<<
 ⚡ Apply these instructions to the output
 ⚡ These are direct orders from the user - prioritize them
 ` : ''}
@@ -6478,7 +5940,7 @@ ${customPrompt ? `
 
 ✏️✏️✏️ USER'S CUSTOM INSTRUCTIONS - MUST FOLLOW ✏️✏️✏️
 The user has provided specific instructions that MUST be followed:
->>> ${customPrompt} <<<
+>>> ${sanitizeUserInput(customPrompt)} <<<
 ⚡ Apply these instructions to the output
 ⚡ These are direct orders from the user - prioritize them
 ` : ''}
@@ -6642,7 +6104,7 @@ export const generateMensFashionImage = async (
             numberOfImages: settings.numberOfImages
         });
 
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // API key is now server-side (Cloud Function proxy)
         const modelName = "gemini-3-pro-image-preview";
 
         onProgress?.("👔 Erkek moda görseli hazırlanıyor...");
@@ -6950,14 +6412,10 @@ Görsellerde CEKET/BLAZER varsa:
 
         parts[parts.length - 1] = { text: prompt + aspectInstruction + referenceModelReminder + multipleClothingReminder };
 
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: { parts },
-            config: {
+        const response = await callGeminiProxy(modelName, { parts }, {
                 responseModalities: ["image", "text"],
                 safetySettings: SAFETY_SETTINGS as any,
-            }
-        });
+            });
 
         const imageData = extractImageFromResponse(response);
 
@@ -7658,7 +7116,7 @@ export const generateWomensFashionImage = async (
     additionalClothes?: File[]
 ): Promise<WomensFashionGenerationResult> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // API key is now server-side (Cloud Function proxy)
         const modelName = "gemini-3-pro-image-preview";
 
         onProgress?.("👗 Kadın moda görseli hazırlanıyor...");
@@ -7879,11 +7337,7 @@ Görsellerde CEKET/BLAZER varsa:
             }
         };
 
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: { parts },
-            config: config
-        });
+        const response = await callGeminiProxy(modelName, { parts }, config);
 
         const imageData = extractImageFromResponse(response);
 
@@ -8370,7 +7824,7 @@ export const generateReferencedProduction = async (
     onProgress?: (message: string) => void
 ): Promise<ReferencedProductionResult> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // API key is now server-side (Cloud Function proxy)
         const modelName = "gemini-3-pro-image-preview";
 
         onProgress?.("🎭 Referanslı üretim hazırlanıyor...");
@@ -8423,11 +7877,7 @@ export const generateReferencedProduction = async (
             }
         };
 
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: { parts },
-            config: config
-        });
+        const response = await callGeminiProxy(modelName, { parts }, config);
 
         onProgress?.("✨ Görsel oluşturuldu, işleniyor...");
 
@@ -8519,7 +7969,7 @@ export const generateReferenced2Production = async (
     onProgress?: (message: string) => void
 ): Promise<ReferencedProductionResult> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // API key is now server-side (Cloud Function proxy)
         const modelName = "gemini-3-pro-image-preview";
 
         onProgress?.("🎭 Referanslı 2 üretim hazırlanıyor...");
@@ -8552,7 +8002,7 @@ IMAGES 2-${1 + garmentCount}: GARMENTS - These are the clothing items photograph
 IMAGE ${2 + garmentCount}: SCENE/LOCATION - This is the background environment where the final photo should take place.
 
 === USER'S CUSTOM INSTRUCTIONS ===
-${customPrompt || 'Create a professional fashion photo combining all elements naturally.'}
+${sanitizeUserInput(customPrompt) || 'Create a professional fashion photo combining all elements naturally.'}
 
 === GARMENT PRESERVATION RULES (CRITICAL) ===
 🔴 The garments from the reference images MUST be reproduced with 100% accuracy:
@@ -8630,11 +8080,7 @@ ${customPrompt || 'Create a professional fashion photo combining all elements na
             }
         };
 
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: { parts },
-            config: config
-        });
+        const response = await callGeminiProxy(modelName, { parts }, config);
 
         onProgress?.("✨ Görsel oluşturuldu, işleniyor...");
 
@@ -8717,7 +8163,7 @@ const analyzeSceneImage = async (
     sceneMimeType: string
 ): Promise<string> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // API key is now server-side (Cloud Function proxy)
 
         const analysisPrompt = `Analyze this scene image in detail for a fashion photoshoot placement. Provide a comprehensive description in the following format:
 
@@ -8759,9 +8205,7 @@ const analyzeSceneImage = async (
 
 Respond ONLY with the analysis, no additional commentary. Be very specific about lighting direction and color temperature as these are crucial for realistic integration.`;
 
-        const response = await ai.models.generateContent({
-            model: "gemini-2.0-flash",
-            contents: [{
+        const response = await callGeminiProxy("gemini-2.0-flash", [{
                 role: "user",
                 parts: [
                     {
@@ -8772,11 +8216,9 @@ Respond ONLY with the analysis, no additional commentary. Be very specific about
                     },
                     { text: analysisPrompt }
                 ]
-            }],
-            config: {
+            }], {
                 safetySettings: SAFETY_SETTINGS as any,
-            }
-        });
+            });
 
         const analysisText = response?.candidates?.[0]?.content?.parts?.[0]?.text;
         return analysisText || "";
@@ -9060,7 +8502,7 @@ export const generateScenePlacement = async (
     onProgress?: (message: string) => void
 ): Promise<ScenePlacementResult> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // API key is now server-side (Cloud Function proxy)
         const modelName = "gemini-3-pro-image-preview";
 
         onProgress?.("🎬 Sahneye yerleştirme hazırlanıyor...");
@@ -9108,14 +8550,10 @@ export const generateScenePlacement = async (
             { text: prompt }
         ];
 
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: [{ role: "user", parts }],
-            config: {
+        const response = await callGeminiProxy(modelName, [{ role: "user", parts }], {
                 responseModalities: ["image", "text"],
                 safetySettings: SAFETY_SETTINGS as any,
-            }
-        });
+            });
 
         onProgress?.("✨ Görsel oluşturuldu, işleniyor...");
 
@@ -9719,7 +9157,7 @@ export const generatePresetProduction = async (
             throw new Error("Seçilen preset bulunamadı.");
         }
 
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // API key is now server-side (Cloud Function proxy)
         const modelName = "gemini-3-pro-image-preview";
 
         const useCustomModel = customModel !== undefined && customModel !== null;
@@ -9774,14 +9212,10 @@ export const generatePresetProduction = async (
 
         console.log(`Generating Preset Production: ${sceneName} with ${clothingImages.length} clothing items${useCustomModel ? ' + custom model' : ''}${isCustomBackground ? ' + custom background' : ''}`);
 
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: [{ role: "user", parts }],
-            config: {
+        const response = await callGeminiProxy(modelName, [{ role: "user", parts }], {
                 responseModalities: ["image", "text"],
                 safetySettings: SAFETY_SETTINGS as any,
-            }
-        });
+            });
 
         onProgress?.("✨ Görsel oluşturuldu, işleniyor...");
 
@@ -10044,8 +9478,7 @@ export const generateAnnotationPoseImage = async (
     productImage: File,
     settings: AnnotationPoseSettings
 ): Promise<GenerationResult> => {
-    const apiKey = getApiKey();
-    const ai = new GoogleGenAI({ apiKey });
+    // API key is now server-side (Cloud Function proxy)
 
     const modelId = "imagen-3.0-generate-002";
     const estimatedCost = 0.04;
@@ -10060,9 +9493,7 @@ export const generateAnnotationPoseImage = async (
 
     try {
         // Use Gemini to understand the product first, then generate with Imagen
-        const geminiModel = ai.models.generateContent({
-            model: "gemini-2.0-flash-exp",
-            contents: [{
+        const geminiModel = callGeminiProxy("gemini-2.0-flash-exp", [{
                 role: "user",
                 parts: [
                     {
@@ -10083,8 +9514,7 @@ export const generateAnnotationPoseImage = async (
 Respond in a concise format that can be used for image generation prompts.`
                     }
                 ]
-            }]
-        });
+            }]);
 
         const analysisResponse = await geminiModel;
         const productDescription = analysisResponse.text || 'clothing garment';
@@ -10099,15 +9529,11 @@ ${productDescription}
 
 Remember: Generate the model wearing THIS EXACT garment as described above.`;
 
-        const response = await ai.models.generateImages({
-            model: modelId,
-            prompt: fullPrompt,
-            config: {
+        const response = await callImagenProxy(modelId, fullPrompt, {
                 numberOfImages: 1,
                 aspectRatio: "3:4", // Portrait for fashion
                 personGeneration: "ALLOW_ADULT"
-            }
-        });
+            });
 
         if (!response.generatedImages || response.generatedImages.length === 0) {
             throw new Error("Görsel oluşturulamadı");
@@ -10143,15 +9569,11 @@ ${settings.productType === 'top' ? 'focus on upper body garment' :
   settings.productType === 'outerwear' ? 'wearing jacket or coat' : 'full body outfit'},
 e-commerce ready, catalog style photography`;
 
-            const fallbackResponse = await ai.models.generateImages({
-                model: modelId,
-                prompt: fallbackPrompt,
-                config: {
+            const fallbackResponse = await callImagenProxy(modelId, fallbackPrompt, {
                     numberOfImages: 1,
                     aspectRatio: "3:4",
                     personGeneration: "ALLOW_ADULT"
-                }
-            });
+                });
 
             if (!fallbackResponse.generatedImages || fallbackResponse.generatedImages.length === 0) {
                 throw new Error("Görsel oluşturulamadı");
@@ -10202,7 +9624,7 @@ export const generateCinematicPrompt = async (
     settings: CinematicPromptSettings
 ): Promise<CinematicPromptResult> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // API key is now server-side (Cloud Function proxy)
         const modelName = "gemini-2.5-flash";
 
         const { base64, mimeType } = await processImageForGemini(imageFile, 1024, 0.85);
@@ -10598,24 +10020,20 @@ CRITICAL INSTRUCTIONS:
 
 Respond with ONLY the JSON object, no other text.`;
 
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: [{
+        const response = await callGeminiProxy(modelName, [{
                 role: "user",
                 parts: [
                     { text: systemPrompt },
                     { inlineData: { data: base64, mimeType } },
                     { text: userPrompt }
                 ]
-            }],
-            config: {
+            }], {
                 generationConfig: {
                     temperature: 0.3,
                     topP: 0.85,
                     topK: 40
                 }
-            }
-        });
+            });
 
         const responseText = response.text?.trim() || "";
 
@@ -10650,7 +10068,7 @@ export const generateImageFromCinematicPrompt = async (
     aspectRatio: string
 ): Promise<string> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // API key is now server-side (Cloud Function proxy)
         const modelName = "gemini-3-pro-image-preview";
 
         const { base64, mimeType } = await processImageForGemini(referenceImage, 1536, 0.90);
@@ -10704,11 +10122,7 @@ CRITICAL: Generate a NEW photograph of the SAME subject from this NEW camera ang
             safetySettings: SAFETY_SETTINGS
         };
 
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: { parts },
-            config: config
-        });
+        const response = await callGeminiProxy(modelName, { parts }, config);
 
         // Extract image from response
         const candidate = response.candidates?.[0];
@@ -10782,7 +10196,7 @@ export const generateOzelFitImage = async (
     shoeImage?: File
 ): Promise<OzelFitGenerationResult> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // API key is now server-side (Cloud Function proxy)
         const modelName = "gemini-3-pro-image-preview";
 
         onProgress?.("👖 Pantolon görseli işleniyor...");
@@ -10949,14 +10363,10 @@ CRITICAL ANATOMY & QUALITY ASSURANCE:
         // Add prompt at the end
         parts.push({ text: prompt });
 
-        const response = await ai.models.generateContent({
-            model: modelName,
-            contents: { parts },
-            config: {
+        const response = await callGeminiProxy(modelName, { parts }, {
                 responseModalities: ["image", "text"],
                 safetySettings: SAFETY_SETTINGS as any,
-            }
-        });
+            });
 
         const imageData = extractImageFromResponse(response);
 

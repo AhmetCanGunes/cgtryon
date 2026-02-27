@@ -1,5 +1,6 @@
 
 import React, { useState, useRef, useCallback } from 'react';
+import { useBlobUrl } from '../hooks/useBlobUrl';
 import { Upload, X, ScanEye, Loader2, Download, Maximize2, Image as ImageIcon, Zap } from 'lucide-react';
 import FullScreenImageViewer from './FullScreenImageViewer';
 import Dropdown from './Dropdown';
@@ -30,6 +31,9 @@ const UpscaleMode: React.FC<UpscaleModeProps> = ({ onGenerate, isGenerating }) =
         contrast: 100,
         saturation: 100,
   });
+
+  // Blob URL management — guaranteed cleanup via useBlobUrl hook
+  const sourcePreview = useBlobUrl(sourceImage);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -90,7 +94,7 @@ const UpscaleMode: React.FC<UpscaleModeProps> = ({ onGenerate, isGenerating }) =
                     >
                          {sourceImage ? (
                             <>
-                                <img src={URL.createObjectURL(sourceImage)} className="w-full h-full object-contain p-2" />
+                                <img src={sourcePreview!} className="w-full h-full object-contain p-2" />
                                 <button onClick={(e) => {e.stopPropagation(); setSourceImage(null)}} className="absolute top-2 right-2 p-1.5 bg-white/20 hover:bg-red-500 text-white rounded-md backdrop-blur-md transition-colors"><X size={14}/></button>
                             </>
                          ) : (

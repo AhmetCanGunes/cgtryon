@@ -1,6 +1,7 @@
 
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
+import { useBlobUrl } from '../hooks/useBlobUrl';
 import { Upload, Sparkles, Loader2, Megaphone, LayoutTemplate, RefreshCw, Download, ChevronLeft, ChevronRight, Check, CheckCircle2, Link as LinkIcon, Images, Wand2, Tag, Type, Calendar, CloudSun } from 'lucide-react';
 import {
     AdSettings,
@@ -72,6 +73,9 @@ const AdCreativeMode: React.FC<AdCreativeModeProps> = ({ onGenerate, isGeneratin
   // Similar Generation State
   const [showSimilarCount, setShowSimilarCount] = useState(false);
   const [isGeneratingSimilar, setIsGeneratingSimilar] = useState(false);
+
+  // Blob URL management — guaranteed cleanup via useBlobUrl hook
+  const productPreview = useBlobUrl(productImage);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -165,7 +169,7 @@ const AdCreativeMode: React.FC<AdCreativeModeProps> = ({ onGenerate, isGeneratin
                 >
                     {productImage ? (
                         <>
-                            <img src={URL.createObjectURL(productImage)} className="w-full h-full object-contain p-1" alt="Product" />
+                            <img src={productPreview!} className="w-full h-full object-contain p-1" alt="Product" />
                             <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                 <button className="p-1.5 bg-white/20 rounded text-white"><RefreshCw size={12}/></button>
                             </div>

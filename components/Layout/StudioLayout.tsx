@@ -1,4 +1,5 @@
 import React from 'react';
+import { useBlobUrl } from '../../hooks/useBlobUrl';
 import { cn } from '../../lib/utils';
 
 interface StudioLayoutProps {
@@ -139,11 +140,13 @@ export const UploadBox: React.FC<{
 
   const colors = colorClasses[accentColor] || colorClasses.primary;
 
-  if (image) {
+  const imagePreview = useBlobUrl(image);
+
+  if (image && imagePreview) {
     return (
       <div className={cn('relative group flex-shrink-0', sizeClasses[size])}>
         <img
-          src={URL.createObjectURL(image)}
+          src={imagePreview}
           alt={label}
           className={cn('w-full h-full object-cover rounded-xl ring-2', colors.ring)}
         />

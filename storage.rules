@@ -1,0 +1,27 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Users can only upload/read within their own directory
+    match /generated/{userId}/{allPaths=**} {
+      // Users can read their own files
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      // Users can upload files to their own directory
+      // Max file size: 10MB, only images allowed
+      allow write: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+
+      // Admins can read any file
+      allow read: if request.auth != null && request.auth.token.admin == true;
+    }
+
+    // Default: deny everything else
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

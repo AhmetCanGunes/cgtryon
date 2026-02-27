@@ -3096,12 +3096,6 @@ export interface GenerationSettings {
 
   // --- ADMIN PANEL TYPES ---
 
-  // Admin email listesi - bu email adresleri admin yetkisine sahip olacak
-  export const ADMIN_EMAILS = [
-    'admin@kaapp.com',
-    // Buraya başka admin email adresleri eklenebilir
-  ];
-
   // Admin panel sekmeleri
   export type AdminTabType = 'dashboard' | 'users' | 'subscribers' | 'studio';
 
