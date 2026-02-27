@@ -1,0 +1,5 @@
+{
+  "name": "KAapp",
+  "description": "Professional AI model generation and virtual try-on studio using Gemini 2.5 Flash Image.",
+  "requestFramePermissions": []
+}
