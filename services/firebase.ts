@@ -6,12 +6,12 @@ import { ADMIN_EMAILS, EmailSubscriber, AdminStats, AdminUserView } from '../typ
 
 // Firebase yapılandırması
 const firebaseConfig = {
-  apiKey: "REMOVED_FIREBASE_KEY",
-  authDomain: "cgtryon-1de7c.firebaseapp.com",
-  projectId: "cgtryon-1de7c",
-  storageBucket: "cgtryon-1de7c.firebasestorage.app",
-  messagingSenderId: "444502945614",
-  appId: "1:444502945614:web:be817300e067bfa9e9b81f"
+  apiKey: process.env.FIREBASE_API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.FIREBASE_APP_ID,
 };
 
 // Firebase'i başlat
